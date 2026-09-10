@@ -1,0 +1,1895 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#14181C" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="TIMS" />
+<title>TIMS - Tirta Monitoring System</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #14181C; height: 100%; }
+  #root { height: 100%; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- React (versi produksi, dimuat dari CDN) -->
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- Babel standalone: mengubah kode JSX di bawah menjadi JS biasa langsung di browser -->
+<!-- Aplikasi + sinkronisasi real-time Firebase, sudah dikompilasi dari JSX -> JS -->
+<script type="module">
+const { useState, useEffect } = React;
+window.storage = {
+  get: async (key) => {
+    const raw = localStorage.getItem(key);
+    if (raw === null) {
+      throw new Error("Key not found: " + key);
+    }
+    return { key, value: raw, shared: false };
+  },
+  set: async (key, value) => {
+    localStorage.setItem(key, value);
+    return { key, value, shared: false };
+  },
+  delete: async (key) => {
+    localStorage.removeItem(key);
+    return { key, deleted: true, shared: false };
+  },
+  list: async (prefix) => {
+    const keys = Object.keys(localStorage).filter((k) => !prefix || k.startsWith(prefix));
+    return { keys, prefix, shared: false };
+  }
+};
+const firebaseConfig = {
+  apiKey: "AIzaSyAW95Jr4o7FpnQakSUcKyQum4Y5j0m7Neg",
+  authDomain: "tims-27c55.firebaseapp.com",
+  projectId: "tims-27c55",
+  storageBucket: "tims-27c55.firebasestorage.app",
+  messagingSenderId: "338858868589",
+  appId: "1:338858868589:web:de4e18f498bf3d7d1f6464"
+};
+function firebaseTimeout(ms) {
+  return new Promise((_, reject) => setTimeout(() => reject(new Error("Firebase timeout")), ms));
+}
+async function setupFirebase() {
+  const { initializeApp } = await import("https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js");
+  const { getFirestore, doc, getDoc, setDoc, onSnapshot } = await import("https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js");
+  const { getAuth, signInAnonymously, onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js");
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const auth = getAuth(app);
+  await new Promise((resolve, reject) => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        unsub();
+        resolve(user);
+      }
+    });
+    signInAnonymously(auth).catch(reject);
+  });
+  window.storage = {
+    get: async (key) => {
+      const snap = await getDoc(doc(db, "tims-shared", key));
+      if (!snap.exists() || snap.data().value == null) {
+        throw new Error("Key not found: " + key);
+      }
+      return { key, value: snap.data().value, shared: true };
+    },
+    set: async (key, value) => {
+      await setDoc(doc(db, "tims-shared", key), { value, updatedAt: Date.now() });
+      return { key, value, shared: true };
+    },
+    delete: async (key) => {
+      await setDoc(doc(db, "tims-shared", key), { value: null, updatedAt: Date.now() });
+      return { key, deleted: true, shared: true };
+    },
+    list: async () => ({ keys: [], shared: true })
+  };
+  window.subscribeStorage = (key, callback) => {
+    return onSnapshot(doc(db, "tims-shared", key), (snap) => {
+      if (snap.exists() && snap.data().value != null) {
+        callback(snap.data().value);
+      }
+    });
+  };
+  window.__firebaseReady = true;
+}
+try {
+  await Promise.race([setupFirebase(), firebaseTimeout(15e3)]);
+  console.log("TIMS: tersambung ke Firebase \u2014 data tersinkron real-time.");
+} catch (e) {
+  console.warn("TIMS: Firebase tidak tersedia, memakai penyimpanan lokal per-perangkat.", e);
+  window.__firebaseReady = false;
+}
+function Icon({ children, size = 20, style, ...rest }) {
+  return /* @__PURE__ */ React.createElement(
+    "svg",
+    {
+      width: size,
+      height: size,
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      style,
+      ...rest
+    },
+    children
+  );
+}
+function ChevronLeft(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("polyline", { points: "15 18 9 12 15 6" }));
+}
+function Plus(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("line", { x1: "12", y1: "5", x2: "12", y2: "19" }), /* @__PURE__ */ React.createElement("line", { x1: "5", y1: "12", x2: "19", y2: "12" }));
+}
+function X(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("line", { x1: "18", y1: "6", x2: "6", y2: "18" }), /* @__PURE__ */ React.createElement("line", { x1: "6", y1: "6", x2: "18", y2: "18" }));
+}
+function Search(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("circle", { cx: "11", cy: "11", r: "8" }), /* @__PURE__ */ React.createElement("line", { x1: "21", y1: "21", x2: "16.65", y2: "16.65" }));
+}
+function LayoutGrid(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("rect", { x: "3", y: "3", width: "7", height: "7", rx: "1" }), /* @__PURE__ */ React.createElement("rect", { x: "14", y: "3", width: "7", height: "7", rx: "1" }), /* @__PURE__ */ React.createElement("rect", { x: "3", y: "14", width: "7", height: "7", rx: "1" }), /* @__PURE__ */ React.createElement("rect", { x: "14", y: "14", width: "7", height: "7", rx: "1" }));
+}
+function ClipboardList(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("rect", { x: "5", y: "4", width: "14", height: "17", rx: "2" }), /* @__PURE__ */ React.createElement("path", { d: "M9 4V3a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1" }), /* @__PURE__ */ React.createElement("line", { x1: "8", y1: "10", x2: "16", y2: "10" }), /* @__PURE__ */ React.createElement("line", { x1: "8", y1: "14", x2: "16", y2: "14" }), /* @__PURE__ */ React.createElement("line", { x1: "8", y1: "18", x2: "13", y2: "18" }));
+}
+function History(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("path", { d: "M3 12a9 9 0 1 0 3-6.7" }), /* @__PURE__ */ React.createElement("polyline", { points: "3 4 3 9 8 9" }), /* @__PURE__ */ React.createElement("polyline", { points: "12 7 12 12 16 14" }));
+}
+function Trash2(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("polyline", { points: "3 6 5 6 21 6" }), /* @__PURE__ */ React.createElement("path", { d: "M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" }), /* @__PURE__ */ React.createElement("path", { d: "M10 11v6" }), /* @__PURE__ */ React.createElement("path", { d: "M14 11v6" }), /* @__PURE__ */ React.createElement("path", { d: "M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" }));
+}
+function Download(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("path", { d: "M12 3v12" }), /* @__PURE__ */ React.createElement("polyline", { points: "7 10 12 15 17 10" }), /* @__PURE__ */ React.createElement("path", { d: "M5 21h14" }));
+}
+function Lock(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("rect", { x: "5", y: "11", width: "14", height: "10", rx: "2" }), /* @__PURE__ */ React.createElement("path", { d: "M8 11V7a4 4 0 0 1 8 0v4" }));
+}
+function Unlock(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("rect", { x: "5", y: "11", width: "14", height: "10", rx: "2" }), /* @__PURE__ */ React.createElement("path", { d: "M8 11V7a4 4 0 0 1 7.4-2" }));
+}
+const STORAGE_KEY = "tims-projects-v1";
+const FINANCE_PIN_KEY = "tims-finance-pin";
+const DEFAULT_FINANCE_PIN = "1234";
+const STATUS = ["Terjadwal", "Berlangsung", "Tertunda", "Selesai"];
+const STATUS_COLOR = {
+  Terjadwal: "#8B96A0",
+  Berlangsung: "#4E8FBF",
+  Tertunda: "#D6483D",
+  Selesai: "#3FA66B"
+};
+const STATUS_ORDER = { Tertunda: 0, Berlangsung: 1, Terjadwal: 2, Selesai: 3 };
+const SEVERITY = ["Kritis", "Mayor", "Minor", "Aman"];
+const SEVERITY_COLOR = {
+  Kritis: "#D6483D",
+  Mayor: "#E08A3C",
+  Minor: "#D9B23C",
+  Aman: "#3FA66B"
+};
+const PAYMENT_STATUS = ["Belum Dibayar", "DP / Sebagian", "Lunas"];
+const PAYMENT_COLOR = {
+  "Belum Dibayar": "#D6483D",
+  "DP / Sebagian": "#D9B23C",
+  "Lunas": "#3FA66B"
+};
+const EQUIPMENT_TYPES = [
+  "Cementing",
+  "COI (Certificate of Inspection)",
+  "PLO (Proof Load Test)",
+  "Lifting Gear Equipment",
+  "LGI (Lifting Gear Inspection)",
+  "Iso Container",
+  "Manday Inspektur/Rig",
+  "NDT (Non-Destructive Testing)",
+  "RLA (Remaining Life Assessment)",
+  "PRV (Pressure Relief Valve)",
+  "Lainnya"
+];
+function uid() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+function formatDate(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+}
+function formatDateTime(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" }) + ", " + d.toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+}
+function relativeTime(iso) {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.round(diffMs / 6e4);
+  if (mins < 1) return "baru saja";
+  if (mins < 60) return `${mins} menit lalu`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs} jam lalu`;
+  const days = Math.round(hrs / 24);
+  return `${days} hari lalu`;
+}
+function daysUntil(iso) {
+  const diff = Math.ceil((new Date(iso).setHours(0, 0, 0, 0) - (/* @__PURE__ */ new Date()).setHours(0, 0, 0, 0)) / 864e5);
+  return diff;
+}
+function formatRupiah(n) {
+  if (!n) return "-";
+  return "Rp" + Number(n).toLocaleString("id-ID");
+}
+function formatRupiahShort(n) {
+  if (!n) return "Rp0";
+  if (n >= 1e9) return "Rp" + (n / 1e9).toFixed(1).replace(".", ",") + " M";
+  if (n >= 1e6) return "Rp" + Math.round(n / 1e6) + " jt";
+  return "Rp" + Number(n).toLocaleString("id-ID");
+}
+function getLatestUpdate(project) {
+  if (!project.updates || project.updates.length === 0) return null;
+  return [...project.updates].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))[0];
+}
+function seedData() {
+  const base = (/* @__PURE__ */ new Date("2026-01-15T09:00:00+07:00")).getTime();
+  const item = (i) => new Date(base + i * 36e5).toISOString();
+  return [
+    {
+      id: uid(),
+      rigName: "Cementing SJ Petro",
+      client: "PT Duta Wisesa Servisindo",
+      equipmentType: "Cementing",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 165e6,
+      dpAmount: 0,
+      finalPaymentAmount: 165e6,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(0),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "RE COI PRV",
+      client: "PT Duta Wisesa Servisindo",
+      equipmentType: "PRV (Pressure Relief Valve)",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 27e6,
+      dpAmount: 0,
+      finalPaymentAmount: 27e6,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(1),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "PLO CU#05",
+      client: "PT Bohai",
+      equipmentType: "PLO (Proof Load Test)",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 1125e5,
+      dpAmount: 0,
+      finalPaymentAmount: 1125e5,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(2),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "Lifting Gear Equipment Bohai#87",
+      client: "PT Bohai",
+      equipmentType: "Lifting Gear Equipment",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 3e7,
+      dpAmount: 0,
+      finalPaymentAmount: 1308e4,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(3),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "Lifting Gear Equipment Bohai#60",
+      client: "PT Bohai",
+      equipmentType: "Lifting Gear Equipment",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 35e6,
+      dpAmount: 0,
+      finalPaymentAmount: 1394e4,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(4),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "Lifting Gear Equipment Bohai#28",
+      client: "PT Bohai",
+      equipmentType: "Lifting Gear Equipment",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 35e6,
+      dpAmount: 0,
+      finalPaymentAmount: 1526e4,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(5),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "Lifting Gear Equipment Bohai#90",
+      client: "PT Bohai",
+      equipmentType: "Lifting Gear Equipment",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 33e6,
+      dpAmount: 0,
+      finalPaymentAmount: 1308e4,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(6),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "Iso Container 20ft 3 Unit",
+      client: "PT BPS",
+      equipmentType: "Iso Container",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 425e4,
+      dpAmount: 0,
+      finalPaymentAmount: 425e4,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(7),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "Iso Container 20ft 2 Unit",
+      client: "PT BPS",
+      equipmentType: "Iso Container",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 295e4,
+      dpAmount: 0,
+      finalPaymentAmount: 295e4,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(8),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "Manday Inspektur Rig",
+      client: "PT Valdo Teknik Indonesia",
+      equipmentType: "Manday Inspektur/Rig",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 175e5,
+      dpAmount: 0,
+      finalPaymentAmount: 175e5,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(9),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "Container",
+      client: "PT Duta Wisesa Servisindo",
+      equipmentType: "Iso Container",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 5e6,
+      dpAmount: 0,
+      finalPaymentAmount: 5e6,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(10),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "LGI",
+      client: "PT Duta Wisesa Servisindo",
+      equipmentType: "LGI (Lifting Gear Inspection)",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 15e6,
+      dpAmount: 0,
+      finalPaymentAmount: 15e6,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(11),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "Rig Manday",
+      client: "PT Valdo Teknik Indonesia",
+      equipmentType: "Manday Inspektur/Rig",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 16e6,
+      dpAmount: 325e4,
+      finalPaymentAmount: 1275e4,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(12),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "Manday Inspektur Rig",
+      client: "PT Valdo Teknik Indonesia",
+      equipmentType: "Manday Inspektur/Rig",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 16e6,
+      dpAmount: 8e6,
+      finalPaymentAmount: 8e6,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(13),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "LGI NYT#19",
+      client: "PT Nana Yamano Technik",
+      equipmentType: "LGI (Lifting Gear Inspection)",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 27e6,
+      dpAmount: 0,
+      finalPaymentAmount: 27e6,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(14),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "NYT#17 (750HP)",
+      client: "PT. Nana Yamano Teknic",
+      equipmentType: "Lainnya",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 305e6,
+      dpAmount: 1525e5,
+      finalPaymentAmount: 169725e3,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(15),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "COI Accumulator",
+      client: "Sispec",
+      equipmentType: "COI (Certificate of Inspection)",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 0,
+      dpAmount: 215e5,
+      finalPaymentAmount: 0,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(16),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama. Nilai jasa Rp43.000.000, dicicil @Rp5.000.000. Catatan asal: 21.500.000 - 5.000.000 = 16.500.000.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "COI MGS",
+      client: "Sispec",
+      equipmentType: "COI (Certificate of Inspection)",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 0,
+      dpAmount: 19e6,
+      finalPaymentAmount: 0,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(17),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama. Nilai jasa Rp38.000.000, dicicil @Rp5.000.000. Catatan asal: 19.000.000 - 5.000.000 = 14.500.000.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "NDT",
+      client: "CII",
+      equipmentType: "NDT (Non-Destructive Testing)",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 0,
+      dpAmount: 0,
+      finalPaymentAmount: 0,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(18),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "RLA",
+      client: "MSE",
+      equipmentType: "RLA (Remaining Life Assessment)",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Selesai",
+      progress: 100,
+      contractValue: 0,
+      dpAmount: 215e5,
+      finalPaymentAmount: 0,
+      paymentStatus: "Lunas",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(19),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama. Sudah dicicil.",
+          progress: 100,
+          status: "Selesai",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "Lifting Gear Equipment Bohai#89",
+      client: "PT Bohai",
+      equipmentType: "Lifting Gear Equipment",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Berlangsung",
+      progress: 85,
+      contractValue: 3e7,
+      dpAmount: 0,
+      finalPaymentAmount: 327e5,
+      paymentStatus: "Belum Dibayar",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(20),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 85,
+          status: "Berlangsung",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "DWS SPU-007",
+      client: "PT Duta Wisesa Servisindo",
+      equipmentType: "Lainnya",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Berlangsung",
+      progress: 85,
+      contractValue: 158e6,
+      dpAmount: 79e6,
+      finalPaymentAmount: 79e6,
+      paymentStatus: "Belum Dibayar",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(21),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 85,
+          status: "Berlangsung",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "RE Rig SPU-007",
+      client: "PT Duta Wisesa Servisindo",
+      equipmentType: "Manday Inspektur/Rig",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Berlangsung",
+      progress: 85,
+      contractValue: 28e6,
+      dpAmount: 0,
+      finalPaymentAmount: 28e6,
+      paymentStatus: "Belum Dibayar",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(22),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 85,
+          status: "Berlangsung",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "COI PRV Internal (dalaz)",
+      client: "PT Duta Wisesa Servisindo",
+      equipmentType: "PRV (Pressure Relief Valve)",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Berlangsung",
+      progress: 85,
+      contractValue: 0,
+      dpAmount: 126e5,
+      finalPaymentAmount: 0,
+      paymentStatus: "DP / Sebagian",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(23),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama. Menggunakan subkontraktor: dalaz.",
+          progress: 85,
+          status: "Berlangsung",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "RE PLO SPU-007 (MSE)",
+      client: "MSE",
+      equipmentType: "PLO (Proof Load Test)",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Berlangsung",
+      progress: 85,
+      contractValue: 0,
+      dpAmount: 1e7,
+      finalPaymentAmount: 0,
+      paymentStatus: "DP / Sebagian",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(24),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 85,
+          status: "Berlangsung",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "COSL COI Gantry&Forklift #Tender",
+      client: "PT COSL Indo",
+      equipmentType: "COI (Certificate of Inspection)",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Berlangsung",
+      progress: 85,
+      contractValue: 211e6,
+      dpAmount: 0,
+      finalPaymentAmount: 23421e4,
+      paymentStatus: "Belum Dibayar",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(25),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama. Ada subcon dalaz senilai Rp128.000.000 (DP Rp20.000.000).",
+          progress: 85,
+          status: "Berlangsung",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "PLO CU & COI PRV (Malaysia)",
+      client: "PT LPS Indonesia",
+      equipmentType: "PLO (Proof Load Test)",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Berlangsung",
+      progress: 85,
+      contractValue: 27e7,
+      dpAmount: 14715e4,
+      finalPaymentAmount: 135e6,
+      paymentStatus: "DP / Sebagian",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(26),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 85,
+          status: "Berlangsung",
+          findings: []
+        }
+      ]
+    },
+    {
+      id: uid(),
+      rigName: "COI PRV COSL (Tender)",
+      client: "PT COSL Indo",
+      equipmentType: "PRV (Pressure Relief Valve)",
+      location: "-",
+      picInput: "-",
+      picLapangan: "-",
+      startDate: "2026-01-01T00:00:00+07:00",
+      deadline: "2026-12-31T23:59:00+07:00",
+      status: "Berlangsung",
+      progress: 85,
+      contractValue: 2836e5,
+      dpAmount: 0,
+      finalPaymentAmount: 2836e5,
+      paymentStatus: "Belum Dibayar",
+      updates: [
+        {
+          id: uid(),
+          timestamp: item(27),
+          author: "Admin",
+          activity: "Data kontrak diimpor dari Project List 2026 PT Tirtaamerta Dayautama.",
+          progress: 85,
+          status: "Berlangsung",
+          findings: []
+        }
+      ]
+    }
+  ];
+}
+const COLORS = {
+  bg: "#14181C",
+  panel: "#1D2329",
+  panelAlt: "#242B32",
+  border: "#2E363D",
+  text: "#EDF0F2",
+  muted: "#8B96A0",
+  accent: "#2F86A6"
+};
+function App() {
+  const [projects, setProjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saveError, setSaveError] = useState("");
+  const [tab, setTab] = useState("dashboard");
+  const [screen, setScreen] = useState(null);
+  const [activeProjectId, setActiveProjectId] = useState(null);
+  const [search, setSearch] = useState("");
+  const [filterStatus, setFilterStatus] = useState("Semua");
+  const [financePin, setFinancePin] = useState(DEFAULT_FINANCE_PIN);
+  const [financeUnlocked, setFinanceUnlocked] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get(FINANCE_PIN_KEY, true);
+        if (res && res.value) setFinancePin(res.value);
+      } catch (e) {
+      }
+    })();
+  }, []);
+  async function changeFinancePin(newPin) {
+    setFinancePin(newPin);
+    try {
+      await window.storage.set(FINANCE_PIN_KEY, newPin, true);
+    } catch (e) {
+    }
+  }
+  function unlockFinance(pin) {
+    if (pin === financePin) {
+      setFinanceUnlocked(true);
+      return true;
+    }
+    return false;
+  }
+  function lockFinance() {
+    setFinanceUnlocked(false);
+  }
+  useEffect(() => {
+    let unsub;
+    (async () => {
+      try {
+        const res = await window.storage.get(STORAGE_KEY, true);
+        if (!(res && res.value)) throw new Error("empty");
+      } catch (e) {
+        const seed = seedData();
+        try {
+          await window.storage.set(STORAGE_KEY, JSON.stringify(seed), true);
+        } catch (e2) {
+          setProjects(seed);
+        }
+      }
+      if (typeof window.subscribeStorage === "function") {
+        unsub = window.subscribeStorage(STORAGE_KEY, (rawValue) => {
+          try {
+            setProjects(JSON.parse(rawValue));
+          } catch (e) {
+          }
+          setLoading(false);
+        });
+      } else {
+        try {
+          const res = await window.storage.get(STORAGE_KEY, true);
+          setProjects(JSON.parse(res.value));
+        } catch (e) {
+          setProjects(seedData());
+        }
+        setLoading(false);
+      }
+    })();
+    return () => {
+      if (unsub) unsub();
+    };
+  }, []);
+  async function persist(next) {
+    setProjects(next);
+    try {
+      await window.storage.set(STORAGE_KEY, JSON.stringify(next), true);
+      setSaveError("");
+    } catch (e) {
+      setSaveError("Gagal menyimpan ke server. Data mungkin hilang saat ditutup.");
+    }
+  }
+  function openDetail(id) {
+    setActiveProjectId(id);
+    setScreen("detail");
+  }
+  function closeScreen() {
+    setScreen(null);
+    setActiveProjectId(null);
+  }
+  function addProject(data) {
+    const project = {
+      id: uid(),
+      ...data,
+      status: "Terjadwal",
+      progress: 0,
+      updates: []
+    };
+    persist([project, ...projects]);
+    openDetail(project.id);
+  }
+  function addUpdate(projectId, updateData) {
+    const next = projects.map((p) => {
+      if (p.id !== projectId) return p;
+      const update = { id: uid(), timestamp: (/* @__PURE__ */ new Date()).toISOString(), ...updateData };
+      return { ...p, progress: updateData.progress, status: updateData.status, updates: [...p.updates, update] };
+    });
+    persist(next);
+    setScreen("detail");
+  }
+  function deleteProject(projectId) {
+    persist(projects.filter((p) => p.id !== projectId));
+    closeScreen();
+  }
+  function updatePaymentStatus(projectId, paymentStatus) {
+    persist(projects.map((p) => p.id === projectId ? { ...p, paymentStatus } : p));
+  }
+  function updateDeadline(projectId, deadline) {
+    persist(projects.map((p) => p.id === projectId ? { ...p, deadline } : p));
+  }
+  function importProjects(data) {
+    persist(data);
+    closeScreen();
+  }
+  const activeProject = projects.find((p) => p.id === activeProjectId) || null;
+  return /* @__PURE__ */ React.createElement("div", { style: { background: "#000", minHeight: "100vh" } }, /* @__PURE__ */ React.createElement("style", null, `
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap');
+        * { box-sizing: border-box; }
+        .ig-frame ::-webkit-scrollbar { width: 0; height: 0; }
+        .ig-frame input, .ig-frame textarea, .ig-frame select {
+          font-family: 'Inter', sans-serif;
+          background: ${COLORS.panelAlt};
+          border: 1px solid ${COLORS.border};
+          color: ${COLORS.text};
+          border-radius: 10px;
+          padding: 12px 13px;
+          font-size: 15px;
+          width: 100%;
+          outline: none;
+        }
+        .ig-frame input:focus, .ig-frame textarea:focus, .ig-frame select:focus {
+          border-color: ${COLORS.accent};
+        }
+        .ig-frame button { font-family: 'Inter', sans-serif; cursor: pointer; }
+        .ig-btn-primary {
+          background: ${COLORS.accent};
+          color: #fff;
+          border: none;
+          border-radius: 10px;
+          padding: 12px 16px;
+          font-weight: 600;
+          font-size: 14px;
+        }
+        .ig-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        .ig-btn-ghost {
+          background: transparent;
+          color: ${COLORS.muted};
+          border: 1px solid ${COLORS.border};
+          border-radius: 10px;
+          padding: 10px 14px;
+          font-size: 14px;
+        }
+        .ig-navbtn {
+          display: flex; flex-direction: column; align-items: center; gap: 3px;
+          background: transparent; border: none; color: ${COLORS.muted};
+          font-size: 11px; padding: 6px 0; flex: 1;
+        }
+        .ig-navbtn.active { color: ${COLORS.accent}; }
+      `), /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      className: "ig-frame",
+      style: {
+        maxWidth: 480,
+        margin: "0 auto",
+        height: "100vh",
+        background: COLORS.bg,
+        color: COLORS.text,
+        fontFamily: "Inter, sans-serif",
+        display: "flex",
+        flexDirection: "column",
+        position: "relative",
+        overflow: "hidden",
+        paddingTop: "env(safe-area-inset-top)",
+        paddingBottom: "env(safe-area-inset-bottom)"
+      }
+    },
+    loading ? /* @__PURE__ */ React.createElement("div", { style: { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.muted } }, "Memuat data...") : screen === "detail" && activeProject ? /* @__PURE__ */ React.createElement(
+      ProjectDetail,
+      {
+        project: activeProject,
+        onBack: closeScreen,
+        onAddUpdate: () => setScreen("newUpdate"),
+        onDelete: () => deleteProject(activeProject.id),
+        onUpdatePayment: (v) => updatePaymentStatus(activeProject.id, v),
+        onUpdateDeadline: (v) => updateDeadline(activeProject.id, v),
+        canSeeFinance: financeUnlocked
+      }
+    ) : screen === "newProject" ? /* @__PURE__ */ React.createElement(NewProjectForm, { onBack: closeScreen, onSave: addProject, canSeeFinance: financeUnlocked }) : screen === "financeAuth" ? /* @__PURE__ */ React.createElement(FinanceAuth, { onBack: closeScreen, onUnlock: unlockFinance, onSuccess: closeScreen }) : screen === "data" ? /* @__PURE__ */ React.createElement(
+      DataBackup,
+      {
+        projects,
+        onBack: closeScreen,
+        onImport: importProjects,
+        canSeeFinance: financeUnlocked,
+        financePin,
+        onChangePin: changeFinancePin
+      }
+    ) : screen === "newUpdate" ? /* @__PURE__ */ React.createElement(
+      NewUpdateForm,
+      {
+        projects,
+        preselectedId: activeProjectId,
+        onBack: () => setScreen(activeProjectId ? "detail" : null),
+        onSave: addUpdate
+      }
+    ) : /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto" } }, tab === "dashboard" && /* @__PURE__ */ React.createElement(
+      Dashboard,
+      {
+        projects,
+        onOpen: openDetail,
+        onGoProjects: () => setTab("projects"),
+        onOpenData: () => setScreen("data"),
+        canSeeFinance: financeUnlocked,
+        onToggleFinance: () => financeUnlocked ? lockFinance() : setScreen("financeAuth")
+      }
+    ), tab === "projects" && /* @__PURE__ */ React.createElement(
+      ProjectsList,
+      {
+        projects,
+        search,
+        setSearch,
+        filterStatus,
+        setFilterStatus,
+        onOpen: openDetail,
+        onNew: () => setScreen("newProject"),
+        canSeeFinance: financeUnlocked
+      }
+    ), tab === "history" && /* @__PURE__ */ React.createElement(HistoryTab, { projects, onOpen: openDetail })), saveError && /* @__PURE__ */ React.createElement("div", { style: { background: "#3A2020", color: "#F2B5B0", fontSize: 12, padding: "8px 16px" } }, saveError), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => {
+          setActiveProjectId(null);
+          setScreen("newUpdate");
+        },
+        style: {
+          position: "absolute",
+          right: 18,
+          bottom: 76,
+          width: 52,
+          height: 52,
+          borderRadius: 26,
+          background: COLORS.accent,
+          border: "none",
+          color: "#fff",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "0 6px 16px rgba(0,0,0,0.4)"
+        },
+        "aria-label": "Tambah update cepat"
+      },
+      /* @__PURE__ */ React.createElement(Plus, { size: 24 })
+    ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", borderTop: `1px solid ${COLORS.border}`, background: COLORS.panel } }, /* @__PURE__ */ React.createElement("button", { className: `ig-navbtn ${tab === "dashboard" ? "active" : ""}`, onClick: () => setTab("dashboard") }, /* @__PURE__ */ React.createElement(LayoutGrid, { size: 20 }), "Dashboard"), /* @__PURE__ */ React.createElement("button", { className: `ig-navbtn ${tab === "projects" ? "active" : ""}`, onClick: () => setTab("projects") }, /* @__PURE__ */ React.createElement(ClipboardList, { size: 20 }), "Proyek"), /* @__PURE__ */ React.createElement("button", { className: `ig-navbtn ${tab === "history" ? "active" : ""}`, onClick: () => setTab("history") }, /* @__PURE__ */ React.createElement(History, { size: 20 }), "Riwayat")))
+  ));
+}
+function StatTile({ label, value, color }) {
+  return /* @__PURE__ */ React.createElement("div", { style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, borderRadius: 12, padding: "12px 12px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "Space Grotesk, sans-serif", fontSize: 20, fontWeight: 700, color: color || COLORS.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, value), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted, marginTop: 2 } }, label));
+}
+function StatusBadge({ status }) {
+  const color = STATUS_COLOR[status] || COLORS.muted;
+  return /* @__PURE__ */ React.createElement(
+    "span",
+    {
+      style: {
+        fontSize: 11,
+        fontWeight: 600,
+        color,
+        background: color + "22",
+        padding: "3px 9px",
+        borderRadius: 20,
+        whiteSpace: "nowrap"
+      }
+    },
+    status
+  );
+}
+function SeverityTag({ severity }) {
+  const color = SEVERITY_COLOR[severity] || COLORS.muted;
+  return /* @__PURE__ */ React.createElement(
+    "span",
+    {
+      style: {
+        fontSize: 11,
+        fontWeight: 600,
+        color,
+        border: `1px solid ${color}55`,
+        padding: "2px 8px",
+        borderRadius: 6,
+        whiteSpace: "nowrap"
+      }
+    },
+    severity
+  );
+}
+function PaymentBadge({ status }) {
+  const color = PAYMENT_COLOR[status] || COLORS.muted;
+  return /* @__PURE__ */ React.createElement(
+    "span",
+    {
+      style: {
+        fontSize: 11,
+        fontWeight: 600,
+        color,
+        background: color + "1A",
+        padding: "3px 9px",
+        borderRadius: 20,
+        whiteSpace: "nowrap"
+      }
+    },
+    status
+  );
+}
+function ProgressBar({ value, height = 6 }) {
+  return /* @__PURE__ */ React.createElement("div", { style: { background: COLORS.panelAlt, borderRadius: 4, height, overflow: "hidden" } }, /* @__PURE__ */ React.createElement("div", { style: { width: `${value}%`, height: "100%", background: COLORS.accent, borderRadius: 4 } }));
+}
+function Header({ title, subtitle, right }) {
+  return /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 16px 12px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "Space Grotesk, sans-serif", fontSize: 20, fontWeight: 700, letterSpacing: 0.2 } }, title), subtitle && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginTop: 2 } }, subtitle)), right);
+}
+function Dashboard({ projects, onOpen, onGoProjects, onOpenData, canSeeFinance, onToggleFinance }) {
+  const counts = {
+    total: projects.length,
+    Berlangsung: projects.filter((p) => p.status === "Berlangsung").length,
+    Tertunda: projects.filter((p) => p.status === "Tertunda").length,
+    Selesai: projects.filter((p) => p.status === "Selesai").length
+  };
+  const piutang = projects.reduce((sum, p) => sum + (p.paymentStatus !== "Lunas" ? p.finalPaymentAmount || 0 : 0), 0);
+  const attention = projects.filter((p) => {
+    const u = getLatestUpdate(p);
+    return p.status === "Tertunda" || u && u.findings.some((f) => f.severity === "Kritis");
+  }).sort((a, b) => daysUntil(a.deadline) - daysUntil(b.deadline)).slice(0, 4);
+  const overdue = projects.filter((p) => p.status !== "Selesai" && daysUntil(p.deadline) < 0).sort((a, b) => daysUntil(a.deadline) - daysUntil(b.deadline));
+  const recentUpdates = projects.flatMap((p) => p.updates.map((u) => ({ ...u, project: p }))).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, 5);
+  const today = (/* @__PURE__ */ new Date()).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" });
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
+    Header,
+    {
+      title: "TIMS",
+      subtitle: `Tirta Monitoring System \xB7 ${today}`,
+      right: /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, flexShrink: 0 } }, /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          onClick: onToggleFinance,
+          "aria-label": canSeeFinance ? "Kunci data keuangan" : "Buka data keuangan",
+          style: {
+            background: canSeeFinance ? COLORS.accent + "22" : COLORS.panelAlt,
+            border: `1px solid ${canSeeFinance ? COLORS.accent : COLORS.border}`,
+            borderRadius: 10,
+            width: 34,
+            height: 34,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: canSeeFinance ? COLORS.accent : COLORS.muted
+          }
+        },
+        canSeeFinance ? /* @__PURE__ */ React.createElement(Unlock, { size: 16 }) : /* @__PURE__ */ React.createElement(Lock, { size: 16 })
+      ), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          onClick: onOpenData,
+          "aria-label": "Data & cadangan",
+          style: {
+            background: COLORS.panelAlt,
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: 10,
+            width: 34,
+            height: 34,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: COLORS.muted
+          }
+        },
+        /* @__PURE__ */ React.createElement(Download, { size: 16 })
+      ))
+    }
+  ), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px 14px" } }, typeof window !== "undefined" && window.__firebaseReady ? /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        background: STATUS_COLOR.Selesai + "1A",
+        color: STATUS_COLOR.Selesai,
+        fontSize: 11.5,
+        fontWeight: 600,
+        padding: "5px 10px",
+        borderRadius: 20
+      }
+    },
+    /* @__PURE__ */ React.createElement("span", { style: { width: 7, height: 7, borderRadius: 4, background: STATUS_COLOR.Selesai } }),
+    "Tersinkron real-time"
+  ) : /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        background: PAYMENT_COLOR["Belum Dibayar"] + "1A",
+        color: PAYMENT_COLOR["Belum Dibayar"],
+        fontSize: 11.5,
+        fontWeight: 600,
+        padding: "5px 10px",
+        borderRadius: 20
+      }
+    },
+    /* @__PURE__ */ React.createElement("span", { style: { width: 7, height: 7, borderRadius: 4, background: PAYMENT_COLOR["Belum Dibayar"] } }),
+    "Mode lokal \u2014 data tidak tersinkron ke perangkat lain"
+  )), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 } }, /* @__PURE__ */ React.createElement(StatTile, { label: "Total proyek", value: counts.total }), /* @__PURE__ */ React.createElement(StatTile, { label: "Berlangsung", value: counts.Berlangsung, color: STATUS_COLOR.Berlangsung }), /* @__PURE__ */ React.createElement(StatTile, { label: "Tertunda", value: counts.Tertunda, color: STATUS_COLOR.Tertunda }), /* @__PURE__ */ React.createElement(StatTile, { label: "Selesai", value: counts.Selesai, color: STATUS_COLOR.Selesai }), canSeeFinance ? /* @__PURE__ */ React.createElement(StatTile, { label: "Piutang", value: formatRupiahShort(piutang), color: piutang > 0 ? PAYMENT_COLOR["Belum Dibayar"] : COLORS.text }) : /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: onToggleFinance,
+      style: {
+        background: COLORS.panelAlt,
+        border: `1px dashed ${COLORS.border}`,
+        borderRadius: 12,
+        padding: "14px 16px",
+        textAlign: "left",
+        color: COLORS.muted,
+        display: "flex",
+        flexDirection: "column",
+        gap: 4
+      }
+    },
+    /* @__PURE__ */ React.createElement(Lock, { size: 16 }),
+    /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11 } }, "Data keuangan")
+  )), /* @__PURE__ */ React.createElement("div", { style: { padding: "22px 16px 8px" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, color: overdue.length > 0 ? SEVERITY_COLOR.Kritis : COLORS.text } }, "Pekerjaan melebihi target (", overdue.length, ")")), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px", display: "flex", flexDirection: "column", gap: 8 } }, overdue.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: COLORS.muted, background: COLORS.panelAlt, borderRadius: 10, padding: 14 } }, "Tidak ada pekerjaan yang melewati target selesai. Kerja bagus!"), overdue.map((p) => {
+    const d = daysUntil(p.deadline);
+    return /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: p.id,
+        onClick: () => onOpen(p.id),
+        style: {
+          textAlign: "left",
+          background: COLORS.panelAlt,
+          border: `1px solid ${COLORS.border}`,
+          borderLeft: `3px solid ${SEVERITY_COLOR.Kritis}`,
+          borderRadius: 10,
+          padding: 12
+        }
+      },
+      /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: 13.5 } }, p.rigName), /* @__PURE__ */ React.createElement(StatusBadge, { status: p.status })),
+      /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.muted, marginTop: 3 } }, p.client),
+      /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: COLORS.muted } }, "Target: ", formatDate(p.deadline)), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, fontWeight: 600, color: SEVERITY_COLOR.Kritis } }, "Lewat ", Math.abs(d), " hari"))
+    );
+  })), /* @__PURE__ */ React.createElement("div", { style: { padding: "22px 16px 8px", display: "flex", alignItems: "center", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600 } }, "Butuh perhatian"), /* @__PURE__ */ React.createElement("button", { onClick: onGoProjects, style: { background: "none", border: "none", color: COLORS.accent, fontSize: 12 } }, "Lihat semua")), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px", display: "flex", flexDirection: "column", gap: 8 } }, attention.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: COLORS.muted, background: COLORS.panelAlt, borderRadius: 10, padding: 14 } }, "Tidak ada proyek yang butuh perhatian khusus saat ini."), attention.map((p) => {
+    const d = daysUntil(p.deadline);
+    const u = getLatestUpdate(p);
+    const worstFinding = u && [...u.findings].sort((a, b) => SEVERITY.indexOf(a.severity) - SEVERITY.indexOf(b.severity))[0];
+    return /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        key: p.id,
+        onClick: () => onOpen(p.id),
+        style: {
+          textAlign: "left",
+          background: COLORS.panelAlt,
+          border: `1px solid ${COLORS.border}`,
+          borderLeft: `3px solid ${STATUS_COLOR[p.status]}`,
+          borderRadius: 10,
+          padding: 12
+        }
+      },
+      /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: 13.5 } }, p.rigName), /* @__PURE__ */ React.createElement(StatusBadge, { status: p.status })),
+      /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.muted, marginTop: 3 } }, worstFinding ? worstFinding.description : p.equipmentType),
+      /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, marginTop: 6, color: d < 0 ? SEVERITY_COLOR.Kritis : COLORS.muted } }, d < 0 ? `Terlambat ${Math.abs(d)} hari` : `${d} hari lagi ke target selesai`)
+    );
+  })), /* @__PURE__ */ React.createElement("div", { style: { padding: "22px 16px 8px", fontSize: 13.5, fontWeight: 600 } }, "Update terbaru"), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px 24px", display: "flex", flexDirection: "column", gap: 0 } }, recentUpdates.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: COLORS.muted } }, "Belum ada update."), recentUpdates.map((u, i) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: u.id,
+      onClick: () => onOpen(u.project.id),
+      style: {
+        textAlign: "left",
+        background: "transparent",
+        border: "none",
+        borderBottom: i < recentUpdates.length - 1 ? `1px solid ${COLORS.border}` : "none",
+        padding: "10px 0"
+      }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600 } }, u.project.rigName), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted } }, relativeTime(u.timestamp))),
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.muted, marginTop: 2 } }, u.author, " \xB7 ", u.activity)
+  ))));
+}
+function FinanceAuth({ onBack, onUnlock, onSuccess }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState("");
+  function submit() {
+    if (onUnlock(pin)) {
+      onSuccess();
+    } else {
+      setError("PIN salah. Coba lagi atau hubungi admin.");
+      setPin("");
+    }
+  }
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: "Buka data keuangan", onBack }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: COLORS.muted, lineHeight: 1.6, marginBottom: 16 } }, "Masukkan PIN untuk melihat harga kontrak, DP, pembayaran, dan status pelunasan. Hubungi admin bila lupa PIN."), /* @__PURE__ */ React.createElement(Field, { label: "PIN" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "password",
+      inputMode: "numeric",
+      value: pin,
+      onChange: (e) => {
+        setPin(e.target.value);
+        setError("");
+      },
+      placeholder: "Masukkan PIN",
+      autoFocus: true
+    }
+  )), error && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: SEVERITY_COLOR.Kritis, marginBottom: 8 } }, error), /* @__PURE__ */ React.createElement("button", { onClick: submit, disabled: !pin, className: "ig-btn-primary", style: { width: "100%", marginTop: 8 } }, "Buka akses")));
+}
+function DataBackup({ projects, onBack, onImport, canSeeFinance, financePin, onChangePin }) {
+  const [message, setMessage] = useState("");
+  const [pinMessage, setPinMessage] = useState("");
+  const [newPin, setNewPin] = useState("");
+  function handleExport() {
+    const blob = new Blob([JSON.stringify(projects, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `tims-backup-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    setMessage("Cadangan berhasil diunduh.");
+  }
+  function handleImportFile(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!Array.isArray(data)) throw new Error("format tidak sesuai");
+        onImport(data);
+        setMessage(`Berhasil impor ${data.length} proyek. Data lama di perangkat ini digantikan.`);
+      } catch (err) {
+        setMessage("Gagal membaca file. Pastikan ini file cadangan TIMS (.json) yang valid.");
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: "Data & cadangan", onBack }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: COLORS.muted, lineHeight: 1.6 } }, "Aplikasi ini tersimpan langsung di HP Anda \u2014 data hanya ada di perangkat & browser ini, tidak otomatis tersinkron ke perangkat lain. Unduh cadangan secara berkala, lalu impor file itu di perangkat lain bila perlu berbagi data tim."), /* @__PURE__ */ React.createElement("button", { onClick: handleExport, className: "ig-btn-primary", style: { width: "100%", marginTop: 16 } }, "Unduh cadangan (.json)"), /* @__PURE__ */ React.createElement(
+    "label",
+    {
+      className: "ig-btn-ghost",
+      style: { display: "block", textAlign: "center", marginTop: 10, cursor: "pointer" }
+    },
+    "Impor dari file cadangan",
+    /* @__PURE__ */ React.createElement("input", { type: "file", accept: "application/json", onChange: handleImportFile, style: { display: "none" } })
+  ), message && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.accent, marginTop: 12 } }, message), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, marginTop: 28, marginBottom: 8 } }, "Akses data keuangan"), canSeeFinance ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Field, { label: "Ubah PIN keuangan" }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "password",
+      inputMode: "numeric",
+      value: newPin,
+      onChange: (e) => setNewPin(e.target.value),
+      placeholder: `PIN saat ini: ${financePin}`
+    }
+  )), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => {
+        if (newPin.trim().length < 4) {
+          setPinMessage("PIN minimal 4 digit.");
+          return;
+        }
+        onChangePin(newPin.trim());
+        setNewPin("");
+        setPinMessage("PIN berhasil diganti.");
+      },
+      className: "ig-btn-ghost"
+    },
+    "Simpan PIN baru"
+  ), pinMessage && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.accent, marginTop: 8 } }, pinMessage)) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement(Lock, { size: 13 }), " Buka akses keuangan dari dashboard untuk mengubah PIN."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.muted, marginTop: 24 } }, "Total proyek tersimpan: ", projects.length)));
+}
+function ProjectCard({ project, onOpen, canSeeFinance }) {
+  const u = getLatestUpdate(project);
+  return /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => onOpen(project.id),
+      style: {
+        textAlign: "left",
+        background: COLORS.panelAlt,
+        border: `1px solid ${COLORS.border}`,
+        borderLeft: `3px solid ${STATUS_COLOR[project.status]}`,
+        borderRadius: 10,
+        padding: 13,
+        display: "block",
+        width: "100%"
+      }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: 14 } }, project.rigName), /* @__PURE__ */ React.createElement(StatusBadge, { status: project.status })),
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.muted, marginTop: 2 } }, project.client, " \xB7 ", project.equipmentType),
+    canSeeFinance && project.contractValue > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "JetBrains Mono, monospace", fontSize: 12.5, fontWeight: 600, marginTop: 6 } }, formatRupiahShort(project.contractValue)),
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement(ProgressBar, { value: project.progress })), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "JetBrains Mono, monospace", fontSize: 11.5, color: COLORS.muted } }, project.progress, "%")),
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 9 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted } }, u ? `Update terakhir ${relativeTime(u.timestamp)}` : "Belum ada update"), canSeeFinance && /* @__PURE__ */ React.createElement(PaymentBadge, { status: project.paymentStatus }))
+  );
+}
+function ProjectsList({ projects, search, setSearch, filterStatus, setFilterStatus, onOpen, onNew, canSeeFinance }) {
+  const filtered = projects.filter((p) => filterStatus === "Semua" ? true : p.status === filterStatus).filter((p) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    return p.rigName.toLowerCase().includes(q) || p.client.toLowerCase().includes(q) || p.equipmentType.toLowerCase().includes(q) || p.location.toLowerCase().includes(q);
+  }).sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status]);
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 16px 10px", display: "flex", alignItems: "center", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "Space Grotesk, sans-serif", fontSize: 20, fontWeight: 700 } }, "Proyek"), /* @__PURE__ */ React.createElement("button", { onClick: onNew, className: "ig-btn-primary", style: { display: "flex", alignItems: "center", gap: 6, padding: "8px 12px" } }, /* @__PURE__ */ React.createElement(Plus, { size: 16 }), " Baru")), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px 12px", position: "relative" } }, /* @__PURE__ */ React.createElement(Search, { size: 16, style: { position: "absolute", left: 27, top: 13, color: COLORS.muted } }), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: search,
+      onChange: (e) => setSearch(e.target.value),
+      placeholder: "Cari rig, klien, alat, atau lokasi...",
+      style: { paddingLeft: 34, paddingTop: 12, paddingBottom: 12, fontSize: 15 }
+    }
+  ), search && /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      onClick: () => setSearch(""),
+      "aria-label": "Hapus pencarian",
+      style: {
+        position: "absolute",
+        right: 24,
+        top: 9,
+        background: COLORS.border,
+        border: "none",
+        borderRadius: 12,
+        width: 22,
+        height: 22,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: COLORS.text
+      }
+    },
+    /* @__PURE__ */ React.createElement(X, { size: 13 })
+  )), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, padding: "0 16px 12px", overflowX: "auto" } }, ["Semua", ...STATUS].map((s) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: s,
+      onClick: () => setFilterStatus(s),
+      style: {
+        background: filterStatus === s ? COLORS.accent : COLORS.panelAlt,
+        color: filterStatus === s ? "#fff" : COLORS.muted,
+        border: `1px solid ${filterStatus === s ? COLORS.accent : COLORS.border}`,
+        borderRadius: 20,
+        padding: "6px 12px",
+        fontSize: 12,
+        whiteSpace: "nowrap"
+      }
+    },
+    s
+  ))), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px 24px", display: "flex", flexDirection: "column", gap: 10 } }, filtered.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: COLORS.muted, textAlign: "center", padding: "30px 0" } }, "Tidak ada proyek yang cocok. Coba ubah pencarian atau filter."), filtered.map((p) => /* @__PURE__ */ React.createElement(ProjectCard, { key: p.id, project: p, onOpen, canSeeFinance }))));
+}
+function HistoryTab({ projects, onOpen }) {
+  const all = projects.flatMap((p) => p.updates.map((u) => ({ ...u, project: p }))).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Header, { title: "Riwayat", subtitle: "Seluruh update dari semua proyek" }), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px 24px", display: "flex", flexDirection: "column", gap: 10 } }, all.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: COLORS.muted } }, "Belum ada riwayat update."), all.map((u) => /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      key: u.id,
+      onClick: () => onOpen(u.project.id),
+      style: {
+        textAlign: "left",
+        background: COLORS.panelAlt,
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 10,
+        padding: 12
+      }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600 } }, u.project.rigName), /* @__PURE__ */ React.createElement(StatusBadge, { status: u.status })),
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: COLORS.muted, marginTop: 2, fontFamily: "JetBrains Mono, monospace" } }, formatDateTime(u.timestamp), " \xB7 ", u.author),
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, marginTop: 6 } }, u.activity),
+    u.findings.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 } }, u.findings.map((f) => /* @__PURE__ */ React.createElement(SeverityTag, { key: f.id, severity: f.severity })))
+  ))));
+}
+function BackHeader({ title, onBack, right }) {
+  return /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        padding: "16px 12px",
+        borderBottom: `1px solid ${COLORS.border}`
+      }
+    },
+    /* @__PURE__ */ React.createElement("button", { onClick: onBack, style: { background: "none", border: "none", color: COLORS.text, display: "flex", alignItems: "center", gap: 4 } }, /* @__PURE__ */ React.createElement(ChevronLeft, { size: 20 }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 14 } }, "Kembali")),
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 14, fontWeight: 600, position: "absolute", left: "50%", transform: "translateX(-50%)" } }, title),
+    right
+  );
+}
+function InfoRow({ label, value }) {
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", padding: "7px 0", fontSize: 13 } }, /* @__PURE__ */ React.createElement("span", { style: { color: COLORS.muted } }, label), /* @__PURE__ */ React.createElement("span", { style: { fontWeight: 500, textAlign: "right" } }, value));
+}
+function ProjectDetail({ project, onBack, onAddUpdate, onDelete, onUpdatePayment, onUpdateDeadline, canSeeFinance }) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const sortedUpdates = [...project.updates].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  const d = daysUntil(project.deadline);
+  const sevCounts = { Kritis: 0, Mayor: 0, Minor: 0 };
+  project.updates.forEach((u) => u.findings.forEach((f) => {
+    if (sevCounts[f.severity] !== void 0) sevCounts[f.severity]++;
+  }));
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement("div", { style: { position: "relative" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: project.rigName, onBack })), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement(StatusBadge, { status: project.status }), canSeeFinance && /* @__PURE__ */ React.createElement(PaymentBadge, { status: project.paymentStatus })), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: d < 0 ? SEVERITY_COLOR.Kritis : COLORS.muted, whiteSpace: "nowrap" } }, d < 0 ? `Terlambat ${Math.abs(d)} hari` : `Target selesai ${d} hari lagi`)), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12, color: COLORS.muted, marginBottom: 5 } }, /* @__PURE__ */ React.createElement("span", null, "Progres inspeksi"), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "JetBrains Mono, monospace", color: COLORS.text } }, project.progress, "%")), /* @__PURE__ */ React.createElement(ProgressBar, { value: project.progress, height: 8 })), /* @__PURE__ */ React.createElement("div", { style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "4px 14px", marginTop: 16 } }, /* @__PURE__ */ React.createElement(InfoRow, { label: "Klien", value: project.client }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Jenis layanan", value: project.equipmentType }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Lokasi", value: project.location }), /* @__PURE__ */ React.createElement(InfoRow, { label: "PIC Input", value: project.picInput }), /* @__PURE__ */ React.createElement(InfoRow, { label: "PIC Lapangan", value: project.picLapangan }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Mulai", value: formatDate(project.startDate) })), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginBottom: 5 } }, "Target selesai"), /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      type: "date",
+      value: project.deadline ? project.deadline.slice(0, 10) : "",
+      onChange: (e) => onUpdateDeadline((/* @__PURE__ */ new Date(e.target.value + "T23:59:00")).toISOString())
+    }
+  )), canSeeFinance ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "4px 14px", marginTop: 10 } }, /* @__PURE__ */ React.createElement(InfoRow, { label: "Harga kontrak", value: formatRupiah(project.contractValue) }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Pembayaran DP", value: formatRupiah(project.dpAmount) }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Pembayaran FP inc PPN/PPH", value: formatRupiah(project.finalPaymentAmount) })), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginBottom: 5 } }, "Status pembayaran"), /* @__PURE__ */ React.createElement("select", { value: project.paymentStatus, onChange: (e) => onUpdatePayment(e.target.value) }, PAYMENT_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))))) : /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: COLORS.panelAlt,
+        border: `1px dashed ${COLORS.border}`,
+        borderRadius: 10,
+        padding: 12,
+        marginTop: 10,
+        fontSize: 12,
+        color: COLORS.muted
+      }
+    },
+    /* @__PURE__ */ React.createElement(Lock, { size: 14 }),
+    "Data keuangan disembunyikan untuk level akses ini."
+  ), (sevCounts.Kritis > 0 || sevCounts.Mayor > 0 || sevCounts.Minor > 0) && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 14 } }, sevCounts.Kritis > 0 && /* @__PURE__ */ React.createElement(SeverityTag, { severity: `${sevCounts.Kritis} Kritis` }), sevCounts.Mayor > 0 && /* @__PURE__ */ React.createElement(SeverityTag, { severity: `${sevCounts.Mayor} Mayor` }), sevCounts.Minor > 0 && /* @__PURE__ */ React.createElement(SeverityTag, { severity: `${sevCounts.Minor} Minor` })), /* @__PURE__ */ React.createElement("button", { onClick: onAddUpdate, className: "ig-btn-primary", style: { width: "100%", marginTop: 16 } }, "+ Tambah update"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, marginTop: 24, marginBottom: 10 } }, "Riwayat update"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } }, sortedUpdates.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: COLORS.muted } }, "Belum ada update untuk proyek ini."), sortedUpdates.map((u) => /* @__PURE__ */ React.createElement("div", { key: u.id, style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600 } }, u.author), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted, fontFamily: "JetBrains Mono, monospace" } }, formatDateTime(u.timestamp))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, marginTop: 6 } }, u.activity), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 8, alignItems: "center" } }, /* @__PURE__ */ React.createElement(StatusBadge, { status: u.status }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11.5, color: COLORS.muted } }, "Progres saat itu: ", u.progress, "%")), u.findings.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { marginTop: 8, display: "flex", flexDirection: "column", gap: 5 } }, u.findings.map((f) => /* @__PURE__ */ React.createElement("div", { key: f.id, style: { display: "flex", gap: 8, alignItems: "flex-start" } }, /* @__PURE__ */ React.createElement(SeverityTag, { severity: f.severity }), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12, color: COLORS.muted } }, f.description))))))), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 28 } }, !confirmDelete ? /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmDelete(true), className: "ig-btn-ghost", style: { display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement(Trash2, { size: 14 }), " Hapus proyek") : /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8 } }, /* @__PURE__ */ React.createElement("button", { onClick: onDelete, style: { background: SEVERITY_COLOR.Kritis, color: "#fff", border: "none", borderRadius: 10, padding: "10px 14px", fontSize: 13 } }, "Ya, hapus permanen"), /* @__PURE__ */ React.createElement("button", { onClick: () => setConfirmDelete(false), className: "ig-btn-ghost" }, "Batal")))));
+}
+function Field({ label, children }) {
+  return /* @__PURE__ */ React.createElement("div", { style: { marginBottom: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginBottom: 5 } }, label), children);
+}
+function NewProjectForm({ onBack, onSave, canSeeFinance }) {
+  const [rigName, setRigName] = useState("");
+  const [client, setClient] = useState("");
+  const [equipmentType, setEquipmentType] = useState(EQUIPMENT_TYPES[0]);
+  const [location, setLocation] = useState("");
+  const [picInput, setPicInput] = useState("");
+  const [picLapangan, setPicLapangan] = useState("");
+  const [startDate, setStartDate] = useState((/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
+  const [deadline, setDeadline] = useState("");
+  const [paymentStatus, setPaymentStatus] = useState(PAYMENT_STATUS[0]);
+  const [contractValue, setContractValue] = useState("");
+  const [dpAmount, setDpAmount] = useState("");
+  const [finalPaymentAmount, setFinalPaymentAmount] = useState("");
+  const valid = rigName.trim() && client.trim() && location.trim() && picInput.trim() && picLapangan.trim() && deadline;
+  function submit() {
+    if (!valid) return;
+    onSave({
+      rigName: rigName.trim(),
+      client: client.trim(),
+      equipmentType,
+      location: location.trim(),
+      picInput: picInput.trim(),
+      picLapangan: picLapangan.trim(),
+      startDate: new Date(startDate).toISOString(),
+      deadline: new Date(deadline).toISOString(),
+      paymentStatus,
+      contractValue: Number(contractValue) || 0,
+      dpAmount: Number(dpAmount) || 0,
+      finalPaymentAmount: Number(finalPaymentAmount) || 0
+    });
+  }
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: "Proyek baru", onBack }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: 16 } }, /* @__PURE__ */ React.createElement(Field, { label: "Nama rig / unit / judul kontrak" }, /* @__PURE__ */ React.createElement("input", { value: rigName, onChange: (e) => setRigName(e.target.value), placeholder: "cth. Cementing SJ Petro" })), /* @__PURE__ */ React.createElement(Field, { label: "Klien" }, /* @__PURE__ */ React.createElement("input", { value: client, onChange: (e) => setClient(e.target.value), placeholder: "cth. PT Duta Wisesa Servisindo" })), /* @__PURE__ */ React.createElement(Field, { label: "Jenis layanan" }, /* @__PURE__ */ React.createElement("select", { value: equipmentType, onChange: (e) => setEquipmentType(e.target.value) }, EQUIPMENT_TYPES.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t)))), /* @__PURE__ */ React.createElement(Field, { label: "Lokasi" }, /* @__PURE__ */ React.createElement("input", { value: location, onChange: (e) => setLocation(e.target.value), placeholder: "cth. Lapangan Rantau, Aceh" })), /* @__PURE__ */ React.createElement(Field, { label: "PIC Input (penanggung jawab input data)" }, /* @__PURE__ */ React.createElement("input", { value: picInput, onChange: (e) => setPicInput(e.target.value), placeholder: "Nama PIC input" })), /* @__PURE__ */ React.createElement(Field, { label: "PIC Lapangan (penanggung jawab di lokasi)" }, /* @__PURE__ */ React.createElement("input", { value: picLapangan, onChange: (e) => setPicLapangan(e.target.value), placeholder: "Nama PIC lapangan" })), /* @__PURE__ */ React.createElement(Field, { label: "Tanggal mulai" }, /* @__PURE__ */ React.createElement("input", { type: "date", value: startDate, onChange: (e) => setStartDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Target selesai" }, /* @__PURE__ */ React.createElement("input", { type: "date", value: deadline, onChange: (e) => setDeadline(e.target.value) })), canSeeFinance ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Harga kontrak (Rp)" }, /* @__PURE__ */ React.createElement("input", { type: "number", inputMode: "numeric", value: contractValue, onChange: (e) => setContractValue(e.target.value), placeholder: "cth. 165000000" })), /* @__PURE__ */ React.createElement(Field, { label: "Pembayaran DP (Rp)" }, /* @__PURE__ */ React.createElement("input", { type: "number", inputMode: "numeric", value: dpAmount, onChange: (e) => setDpAmount(e.target.value), placeholder: "0 jika belum ada DP" })), /* @__PURE__ */ React.createElement(Field, { label: "Pembayaran FP inc PPN/PPH (Rp)" }, /* @__PURE__ */ React.createElement("input", { type: "number", inputMode: "numeric", value: finalPaymentAmount, onChange: (e) => setFinalPaymentAmount(e.target.value), placeholder: "0 jika belum ada" })), /* @__PURE__ */ React.createElement(Field, { label: "Status pembayaran" }, /* @__PURE__ */ React.createElement("select", { value: paymentStatus, onChange: (e) => setPaymentStatus(e.target.value) }, PAYMENT_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))))) : /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: COLORS.panelAlt,
+        border: `1px dashed ${COLORS.border}`,
+        borderRadius: 10,
+        padding: 12,
+        marginBottom: 14,
+        fontSize: 12,
+        color: COLORS.muted
+      }
+    },
+    /* @__PURE__ */ React.createElement(Lock, { size: 14 }),
+    "Data keuangan disembunyikan untuk level akses ini. Nilai kontrak & pembayaran bisa diisi nanti oleh akun finance."
+  ), /* @__PURE__ */ React.createElement("button", { onClick: submit, disabled: !valid, className: "ig-btn-primary", style: { width: "100%", marginTop: 8 } }, "Simpan proyek")));
+}
+function NewUpdateForm({ projects, preselectedId, onBack, onSave }) {
+  const [projectId, setProjectId] = useState(preselectedId || (projects[0] ? projects[0].id : ""));
+  const project = projects.find((p) => p.id === projectId);
+  const [author, setAuthor] = useState("");
+  const [activity, setActivity] = useState("");
+  const [progress, setProgress] = useState(project ? project.progress : 0);
+  const [status, setStatus] = useState(project ? project.status : "Berlangsung");
+  const [findings, setFindings] = useState([]);
+  useEffect(() => {
+    if (project) {
+      setProgress(project.progress);
+      setStatus(project.status);
+    }
+  }, [projectId]);
+  function addFinding() {
+    setFindings([...findings, { id: uid(), severity: "Minor", description: "" }]);
+  }
+  function updateFinding(id, patch) {
+    setFindings(findings.map((f) => f.id === id ? { ...f, ...patch } : f));
+  }
+  function removeFinding(id) {
+    setFindings(findings.filter((f) => f.id !== id));
+  }
+  const valid = project && author.trim() && activity.trim() && findings.every((f) => f.description.trim());
+  function submit() {
+    if (!valid) return;
+    onSave(project.id, {
+      author: author.trim(),
+      activity: activity.trim(),
+      progress: Number(progress),
+      status,
+      findings
+    });
+  }
+  if (projects.length === 0) {
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: "Update cepat", onBack }), /* @__PURE__ */ React.createElement("div", { style: { padding: 24, fontSize: 13, color: COLORS.muted, textAlign: "center" } }, "Belum ada proyek. Buat proyek terlebih dahulu sebelum menambahkan update."));
+  }
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: "Update cepat", onBack }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: 16 } }, !preselectedId && /* @__PURE__ */ React.createElement(Field, { label: "Proyek" }, /* @__PURE__ */ React.createElement("select", { value: projectId, onChange: (e) => setProjectId(e.target.value) }, projects.map((p) => /* @__PURE__ */ React.createElement("option", { key: p.id, value: p.id }, p.rigName)))), /* @__PURE__ */ React.createElement(Field, { label: "Nama Anda" }, /* @__PURE__ */ React.createElement("input", { value: author, onChange: (e) => setAuthor(e.target.value), placeholder: "Nama PIC" }), project && /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 6 } }, /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setAuthor(project.picInput),
+      style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, color: COLORS.muted, borderRadius: 20, padding: "5px 10px", fontSize: 11.5 }
+    },
+    "PIC Input: ",
+    project.picInput
+  ), /* @__PURE__ */ React.createElement(
+    "button",
+    {
+      type: "button",
+      onClick: () => setAuthor(project.picLapangan),
+      style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, color: COLORS.muted, borderRadius: 20, padding: "5px 10px", fontSize: 11.5 }
+    },
+    "PIC Lapangan: ",
+    project.picLapangan
+  ))), /* @__PURE__ */ React.createElement(Field, { label: "Aktivitas yang dilakukan" }, /* @__PURE__ */ React.createElement("textarea", { rows: 3, value: activity, onChange: (e) => setActivity(e.target.value), placeholder: "cth. Uji tekanan tahap 2 selesai..." })), /* @__PURE__ */ React.createElement(Field, { label: `Progres inspeksi: ${progress}%` }, /* @__PURE__ */ React.createElement("input", { type: "range", min: 0, max: 100, value: progress, onChange: (e) => setProgress(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Status proyek" }, /* @__PURE__ */ React.createElement("select", { value: status, onChange: (e) => setStatus(e.target.value) }, STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted } }, "Temuan (opsional)"), /* @__PURE__ */ React.createElement("button", { onClick: addFinding, style: { background: "none", border: "none", color: COLORS.accent, fontSize: 12, display: "flex", alignItems: "center", gap: 4 } }, /* @__PURE__ */ React.createElement(Plus, { size: 14 }), " Tambah temuan")), findings.map((f) => /* @__PURE__ */ React.createElement("div", { key: f.id, style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 10, marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 8 } }, /* @__PURE__ */ React.createElement("select", { style: { width: 110 }, value: f.severity, onChange: (e) => updateFinding(f.id, { severity: e.target.value }) }, SEVERITY.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s))), /* @__PURE__ */ React.createElement("button", { onClick: () => removeFinding(f.id), style: { background: "none", border: "none", color: COLORS.muted } }, /* @__PURE__ */ React.createElement(X, { size: 16 }))), /* @__PURE__ */ React.createElement("input", { value: f.description, onChange: (e) => updateFinding(f.id, { description: e.target.value }), placeholder: "Deskripsi temuan" }))), /* @__PURE__ */ React.createElement("button", { onClick: submit, disabled: !valid, className: "ig-btn-primary", style: { width: "100%", marginTop: 12 } }, "Simpan update")));
+}
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(App));
+
+</script>
+</body>
+</html>
