@@ -22,7 +22,7 @@
 <!-- Babel standalone: mengubah kode JSX di bawah menjadi JS biasa langsung di browser -->
 <!-- Aplikasi + sinkronisasi real-time Firebase, sudah dikompilasi dari JSX -> JS -->
 <script type="module">
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 window.storage = {
   get: async (key) => {
     const raw = localStorage.getItem(key);
@@ -55,22 +55,32 @@ const firebaseConfig = {
 function firebaseTimeout(ms) {
   return new Promise((_, reject) => setTimeout(() => reject(new Error("Firebase timeout")), ms));
 }
+let firestoreMod = null;
+let authMod = null;
+let cachedDb = null;
+let cachedAuth = null;
+let modulesReady = false;
 async function setupFirebase() {
-  const { initializeApp } = await import("https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js");
-  const { getFirestore, doc, getDoc, setDoc, onSnapshot } = await import("https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js");
-  const { getAuth, signInAnonymously, onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js");
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-  const auth = getAuth(app);
+  if (!modulesReady) {
+    const { initializeApp } = await import("https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js");
+    firestoreMod = await import("https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js");
+    authMod = await import("https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js");
+    const app = initializeApp(firebaseConfig);
+    cachedDb = firestoreMod.getFirestore(app);
+    cachedAuth = authMod.getAuth(app);
+    modulesReady = true;
+  }
   await new Promise((resolve, reject) => {
-    const unsub = onAuthStateChanged(auth, (user) => {
+    const unsub = authMod.onAuthStateChanged(cachedAuth, (user) => {
       if (user) {
         unsub();
         resolve(user);
       }
     });
-    signInAnonymously(auth).catch(reject);
+    authMod.signInAnonymously(cachedAuth).catch(reject);
   });
+  const { doc, getDoc, setDoc, onSnapshot } = firestoreMod;
+  const db = cachedDb;
   window.storage = {
     get: async (key) => {
       const snap = await getDoc(doc(db, "tims-shared", key));
@@ -98,12 +108,19 @@ async function setupFirebase() {
   };
   window.__firebaseReady = true;
 }
-try {
-  await Promise.race([setupFirebase(), firebaseTimeout(8e3)]);
-  console.log("TIMS: tersambung ke Firebase \u2014 data tersinkron real-time.");
-} catch (e) {
-  console.warn("TIMS: Firebase tidak tersedia, memakai penyimpanan lokal per-perangkat.", e);
-}
+window.retryFirebaseSync = async function() {
+  try {
+    await Promise.race([setupFirebase(), firebaseTimeout(15e3)]);
+    window.__firebaseReady = true;
+    console.log("TIMS: tersambung ke Firebase \u2014 data tersinkron real-time.");
+    return true;
+  } catch (e) {
+    window.__firebaseReady = false;
+    console.warn("TIMS: Firebase tidak tersedia, memakai penyimpanan lokal per-perangkat.", e);
+    return false;
+  }
+};
+await window.retryFirebaseSync();
 function Icon({ children, size = 20, style, ...rest }) {
   return /* @__PURE__ */ React.createElement(
     "svg",
@@ -148,6 +165,15 @@ function Trash2(props) {
 }
 function Download(props) {
   return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("path", { d: "M12 3v12" }), /* @__PURE__ */ React.createElement("polyline", { points: "7 10 12 15 17 10" }), /* @__PURE__ */ React.createElement("path", { d: "M5 21h14" }));
+}
+function RefreshCw(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("path", { d: "M21 2v6h-6" }), /* @__PURE__ */ React.createElement("path", { d: "M3 12a9 9 0 0 1 15-6.7L21 8" }), /* @__PURE__ */ React.createElement("path", { d: "M3 22v-6h6" }), /* @__PURE__ */ React.createElement("path", { d: "M21 12a9 9 0 0 1-15 6.7L3 16" }));
+}
+function PenLine(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("path", { d: "M12 20h9" }), /* @__PURE__ */ React.createElement("path", { d: "M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" }));
+}
+function CheckCircle2(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("circle", { cx: "12", cy: "12", r: "10" }), /* @__PURE__ */ React.createElement("path", { d: "m9 12 2 2 4-4" }));
 }
 function Lock(props) {
   return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("rect", { x: "5", y: "11", width: "14", height: "10", rx: "2" }), /* @__PURE__ */ React.createElement("path", { d: "M8 11V7a4 4 0 0 1 8 0v4" }));
@@ -1042,6 +1068,9 @@ function App() {
   const [filterStatus, setFilterStatus] = useState("Semua");
   const [financePin, setFinancePin] = useState(DEFAULT_FINANCE_PIN);
   const [financeUnlocked, setFinanceUnlocked] = useState(false);
+  const [firebaseReady, setFirebaseReady] = useState(() => typeof window !== "undefined" && !!window.__firebaseReady);
+  const [refreshing, setRefreshing] = useState(false);
+  const unsubRef = useRef(null);
   useEffect(() => {
     (async () => {
       try {
@@ -1068,42 +1097,58 @@ function App() {
   function lockFinance() {
     setFinanceUnlocked(false);
   }
-  useEffect(() => {
-    let unsub;
-    (async () => {
+  async function loadAndSubscribe() {
+    if (unsubRef.current) {
+      unsubRef.current();
+      unsubRef.current = null;
+    }
+    try {
+      const res = await window.storage.get(STORAGE_KEY, true);
+      if (!(res && res.value)) throw new Error("empty");
+    } catch (e) {
+      const seed = seedData();
       try {
-        const res = await window.storage.get(STORAGE_KEY, true);
-        if (!(res && res.value)) throw new Error("empty");
-      } catch (e) {
-        const seed = seedData();
-        try {
-          await window.storage.set(STORAGE_KEY, JSON.stringify(seed), true);
-        } catch (e2) {
-          setProjects(seed);
-        }
+        await window.storage.set(STORAGE_KEY, JSON.stringify(seed), true);
+      } catch (e2) {
+        setProjects(seed);
       }
-      if (typeof window.subscribeStorage === "function") {
-        unsub = window.subscribeStorage(STORAGE_KEY, (rawValue) => {
-          try {
-            setProjects(JSON.parse(rawValue));
-          } catch (e) {
-          }
-          setLoading(false);
-        });
-      } else {
+    }
+    if (typeof window.subscribeStorage === "function") {
+      unsubRef.current = window.subscribeStorage(STORAGE_KEY, (rawValue) => {
         try {
-          const res = await window.storage.get(STORAGE_KEY, true);
-          setProjects(JSON.parse(res.value));
+          setProjects(JSON.parse(rawValue));
         } catch (e) {
-          setProjects(seedData());
         }
         setLoading(false);
+      });
+    } else {
+      try {
+        const res = await window.storage.get(STORAGE_KEY, true);
+        setProjects(JSON.parse(res.value));
+      } catch (e) {
+        setProjects(seedData());
       }
-    })();
+      setLoading(false);
+    }
+  }
+  useEffect(() => {
+    loadAndSubscribe();
     return () => {
-      if (unsub) unsub();
+      if (unsubRef.current) unsubRef.current();
     };
   }, []);
+  async function refreshData() {
+    setRefreshing(true);
+    if (!window.__firebaseReady && typeof window.retryFirebaseSync === "function") {
+      try {
+        await window.retryFirebaseSync();
+      } catch (e) {
+      }
+    }
+    setFirebaseReady(!!window.__firebaseReady);
+    await loadAndSubscribe();
+    setRefreshing(false);
+  }
   async function persist(next) {
     setProjects(next);
     try {
@@ -1116,6 +1161,26 @@ function App() {
   function openDetail(id) {
     setActiveProjectId(id);
     setScreen("detail");
+  }
+  function openQuickUpdate(id) {
+    setActiveProjectId(id);
+    setScreen("newUpdate");
+  }
+  function markComplete(projectId) {
+    const update = {
+      id: uid(),
+      timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+      author: "-",
+      activity: "Status diubah menjadi Selesai (aksi cepat dari daftar proyek).",
+      progress: 100,
+      status: "Selesai",
+      findings: []
+    };
+    persist(
+      projects.map(
+        (p) => p.id === projectId ? { ...p, status: "Selesai", progress: 100, updates: [...p.updates, update] } : p
+      )
+    );
   }
   function closeScreen() {
     setScreen(null);
@@ -1199,6 +1264,8 @@ function App() {
           font-size: 11px; padding: 6px 0; flex: 1;
         }
         .ig-navbtn.active { color: ${COLORS.accent}; }
+        .ig-spin { animation: ig-spin-anim 0.8s linear infinite; }
+        @keyframes ig-spin-anim { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       `), /* @__PURE__ */ React.createElement(
     "div",
     {
@@ -1255,7 +1322,10 @@ function App() {
         onGoProjects: () => setTab("projects"),
         onOpenData: () => setScreen("data"),
         canSeeFinance: financeUnlocked,
-        onToggleFinance: () => financeUnlocked ? lockFinance() : setScreen("financeAuth")
+        onToggleFinance: () => financeUnlocked ? lockFinance() : setScreen("financeAuth"),
+        firebaseReady,
+        refreshing,
+        onRefresh: refreshData
       }
     ), tab === "projects" && /* @__PURE__ */ React.createElement(
       ProjectsList,
@@ -1267,7 +1337,9 @@ function App() {
         setFilterStatus,
         onOpen: openDetail,
         onNew: () => setScreen("newProject"),
-        canSeeFinance: financeUnlocked
+        canSeeFinance: financeUnlocked,
+        onQuickUpdate: openQuickUpdate,
+        onMarkComplete: markComplete
       }
     ), tab === "history" && /* @__PURE__ */ React.createElement(HistoryTab, { projects, onOpen: openDetail })), saveError && /* @__PURE__ */ React.createElement("div", { style: { background: "#3A2020", color: "#F2B5B0", fontSize: 12, padding: "8px 16px" } }, saveError), /* @__PURE__ */ React.createElement(
       "button",
@@ -1293,7 +1365,7 @@ function App() {
         },
         "aria-label": "Tambah update cepat"
       },
-      /* @__PURE__ */ React.createElement(Plus, { size: 24 })
+      /* @__PURE__ */ React.createElement(PenLine, { size: 22 })
     ), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", borderTop: `1px solid ${COLORS.border}`, background: COLORS.panel } }, /* @__PURE__ */ React.createElement("button", { className: `ig-navbtn ${tab === "dashboard" ? "active" : ""}`, onClick: () => setTab("dashboard") }, /* @__PURE__ */ React.createElement(LayoutGrid, { size: 20 }), "Dashboard"), /* @__PURE__ */ React.createElement("button", { className: `ig-navbtn ${tab === "projects" ? "active" : ""}`, onClick: () => setTab("projects") }, /* @__PURE__ */ React.createElement(ClipboardList, { size: 20 }), "Proyek"), /* @__PURE__ */ React.createElement("button", { className: `ig-navbtn ${tab === "history" ? "active" : ""}`, onClick: () => setTab("history") }, /* @__PURE__ */ React.createElement(History, { size: 20 }), "Riwayat")))
   ));
 }
@@ -1360,7 +1432,7 @@ function ProgressBar({ value, height = 6 }) {
 function Header({ title, subtitle, right }) {
   return /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 16px 12px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "Space Grotesk, sans-serif", fontSize: 20, fontWeight: 700, letterSpacing: 0.2 } }, title), subtitle && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginTop: 2 } }, subtitle)), right);
 }
-function Dashboard({ projects, onOpen, onGoProjects, onOpenData, canSeeFinance, onToggleFinance }) {
+function Dashboard({ projects, onOpen, onGoProjects, onOpenData, canSeeFinance, onToggleFinance, firebaseReady, refreshing, onRefresh }) {
   const counts = {
     total: projects.length,
     Berlangsung: projects.filter((p) => p.status === "Berlangsung").length,
@@ -1401,6 +1473,25 @@ function Dashboard({ projects, onOpen, onGoProjects, onOpenData, canSeeFinance, 
       ), /* @__PURE__ */ React.createElement(
         "button",
         {
+          onClick: onRefresh,
+          disabled: refreshing,
+          "aria-label": "Sinkronkan ulang data",
+          style: {
+            background: COLORS.panelAlt,
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: 10,
+            width: 34,
+            height: 34,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: COLORS.muted
+          }
+        },
+        /* @__PURE__ */ React.createElement(RefreshCw, { size: 16, className: refreshing ? "ig-spin" : "" })
+      ), /* @__PURE__ */ React.createElement(
+        "button",
+        {
           onClick: onOpenData,
           "aria-label": "Data & cadangan",
           style: {
@@ -1418,7 +1509,41 @@ function Dashboard({ projects, onOpen, onGoProjects, onOpenData, canSeeFinance, 
         /* @__PURE__ */ React.createElement(Download, { size: 16 })
       ))
     }
-  ), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 } }, /* @__PURE__ */ React.createElement(StatTile, { label: "Total proyek", value: counts.total }), /* @__PURE__ */ React.createElement(StatTile, { label: "Berlangsung", value: counts.Berlangsung, color: STATUS_COLOR.Berlangsung }), /* @__PURE__ */ React.createElement(StatTile, { label: "Tertunda", value: counts.Tertunda, color: STATUS_COLOR.Tertunda }), /* @__PURE__ */ React.createElement(StatTile, { label: "Selesai", value: counts.Selesai, color: STATUS_COLOR.Selesai }), canSeeFinance ? /* @__PURE__ */ React.createElement(StatTile, { label: "Piutang", value: formatRupiahShort(piutang), color: piutang > 0 ? PAYMENT_COLOR["Belum Dibayar"] : COLORS.text }) : /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px 14px" } }, firebaseReady ? /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        background: STATUS_COLOR.Selesai + "1A",
+        color: STATUS_COLOR.Selesai,
+        fontSize: 11.5,
+        fontWeight: 600,
+        padding: "5px 10px",
+        borderRadius: 20
+      }
+    },
+    /* @__PURE__ */ React.createElement("span", { style: { width: 7, height: 7, borderRadius: 4, background: STATUS_COLOR.Selesai } }),
+    "Tersinkron real-time"
+  ) : /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        background: PAYMENT_COLOR["Belum Dibayar"] + "1A",
+        color: PAYMENT_COLOR["Belum Dibayar"],
+        fontSize: 11.5,
+        fontWeight: 600,
+        padding: "5px 10px",
+        borderRadius: 20
+      }
+    },
+    /* @__PURE__ */ React.createElement("span", { style: { width: 7, height: 7, borderRadius: 4, background: PAYMENT_COLOR["Belum Dibayar"] } }),
+    "Mode lokal \u2014 data tidak tersinkron ke perangkat lain"
+  )), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 } }, /* @__PURE__ */ React.createElement(StatTile, { label: "Total proyek", value: counts.total }), /* @__PURE__ */ React.createElement(StatTile, { label: "Berlangsung", value: counts.Berlangsung, color: STATUS_COLOR.Berlangsung }), /* @__PURE__ */ React.createElement(StatTile, { label: "Tertunda", value: counts.Tertunda, color: STATUS_COLOR.Tertunda }), /* @__PURE__ */ React.createElement(StatTile, { label: "Selesai", value: counts.Selesai, color: STATUS_COLOR.Selesai }), canSeeFinance ? /* @__PURE__ */ React.createElement(StatTile, { label: "Piutang", value: formatRupiahShort(piutang), color: piutang > 0 ? PAYMENT_COLOR["Belum Dibayar"] : COLORS.text }) : /* @__PURE__ */ React.createElement(
     "button",
     {
       onClick: onToggleFinance,
@@ -1588,11 +1713,15 @@ function DataBackup({ projects, onBack, onImport, canSeeFinance, financePin, onC
     "Simpan PIN baru"
   ), pinMessage && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.accent, marginTop: 8 } }, pinMessage)) : /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, display: "flex", alignItems: "center", gap: 6 } }, /* @__PURE__ */ React.createElement(Lock, { size: 13 }), " Buka akses keuangan dari dashboard untuk mengubah PIN."), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.muted, marginTop: 24 } }, "Total proyek tersimpan: ", projects.length)));
 }
-function ProjectCard({ project, onOpen, canSeeFinance }) {
+function ProjectCard({ project, onOpen, canSeeFinance, onQuickUpdate, onMarkComplete }) {
   const u = getLatestUpdate(project);
+  const [confirming, setConfirming] = useState(false);
+  const isDone = project.status === "Selesai";
   return /* @__PURE__ */ React.createElement(
-    "button",
+    "div",
     {
+      role: "button",
+      tabIndex: 0,
       onClick: () => onOpen(project.id),
       style: {
         textAlign: "left",
@@ -1602,17 +1731,95 @@ function ProjectCard({ project, onOpen, canSeeFinance }) {
         borderRadius: 10,
         padding: 13,
         display: "block",
-        width: "100%"
+        width: "100%",
+        cursor: "pointer"
       }
     },
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontWeight: 600, fontSize: 14 } }, project.rigName), /* @__PURE__ */ React.createElement(StatusBadge, { status: project.status })),
     /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.muted, marginTop: 2 } }, project.client, " \xB7 ", project.equipmentType),
     canSeeFinance && project.contractValue > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "JetBrains Mono, monospace", fontSize: 12.5, fontWeight: 600, marginTop: 6 } }, formatRupiahShort(project.contractValue)),
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { flex: 1 } }, /* @__PURE__ */ React.createElement(ProgressBar, { value: project.progress })), /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "JetBrains Mono, monospace", fontSize: 11.5, color: COLORS.muted } }, project.progress, "%")),
-    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 9 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted } }, u ? `Update terakhir ${relativeTime(u.timestamp)}` : "Belum ada update"), canSeeFinance && /* @__PURE__ */ React.createElement(PaymentBadge, { status: project.paymentStatus }))
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 9 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted } }, u ? `Update terakhir ${relativeTime(u.timestamp)}` : "Belum ada update"), canSeeFinance && /* @__PURE__ */ React.createElement(PaymentBadge, { status: project.paymentStatus })),
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginTop: 10 }, onClick: (e) => e.stopPropagation() }, /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => onQuickUpdate(project.id),
+        style: {
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 6,
+          background: COLORS.bg,
+          border: `1px solid ${COLORS.border}`,
+          borderRadius: 8,
+          padding: "8px 0",
+          color: COLORS.text,
+          fontSize: 12.5,
+          fontWeight: 600
+        }
+      },
+      /* @__PURE__ */ React.createElement(PenLine, { size: 13 }),
+      " Update"
+    ), !isDone && (!confirming ? /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => setConfirming(true),
+        style: {
+          flex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 6,
+          background: COLORS.bg,
+          border: `1px solid ${COLORS.border}`,
+          borderRadius: 8,
+          padding: "8px 0",
+          color: STATUS_COLOR.Selesai,
+          fontSize: 12.5,
+          fontWeight: 600
+        }
+      },
+      /* @__PURE__ */ React.createElement(CheckCircle2, { size: 13 }),
+      " Selesai"
+    ) : /* @__PURE__ */ React.createElement("div", { style: { flex: 1, display: "flex", gap: 6 } }, /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => {
+          onMarkComplete(project.id);
+          setConfirming(false);
+        },
+        style: {
+          flex: 1,
+          background: STATUS_COLOR.Selesai,
+          border: "none",
+          borderRadius: 8,
+          padding: "8px 0",
+          color: "#fff",
+          fontSize: 12.5,
+          fontWeight: 600
+        }
+      },
+      "Yakin?"
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => setConfirming(false),
+        style: {
+          flex: 1,
+          background: "transparent",
+          border: `1px solid ${COLORS.border}`,
+          borderRadius: 8,
+          padding: "8px 0",
+          color: COLORS.muted,
+          fontSize: 12.5
+        }
+      },
+      "Batal"
+    ))))
   );
 }
-function ProjectsList({ projects, search, setSearch, filterStatus, setFilterStatus, onOpen, onNew, canSeeFinance }) {
+function ProjectsList({ projects, search, setSearch, filterStatus, setFilterStatus, onOpen, onNew, canSeeFinance, onQuickUpdate, onMarkComplete }) {
   const filtered = projects.filter((p) => filterStatus === "Semua" ? true : p.status === filterStatus).filter((p) => {
     const q = search.trim().toLowerCase();
     if (!q) return true;
@@ -1663,7 +1870,17 @@ function ProjectsList({ projects, search, setSearch, filterStatus, setFilterStat
       }
     },
     s
-  ))), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px 24px", display: "flex", flexDirection: "column", gap: 10 } }, filtered.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: COLORS.muted, textAlign: "center", padding: "30px 0" } }, "Tidak ada proyek yang cocok. Coba ubah pencarian atau filter."), filtered.map((p) => /* @__PURE__ */ React.createElement(ProjectCard, { key: p.id, project: p, onOpen, canSeeFinance }))));
+  ))), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px 24px", display: "flex", flexDirection: "column", gap: 10 } }, filtered.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: COLORS.muted, textAlign: "center", padding: "30px 0" } }, "Tidak ada proyek yang cocok. Coba ubah pencarian atau filter."), filtered.map((p) => /* @__PURE__ */ React.createElement(
+    ProjectCard,
+    {
+      key: p.id,
+      project: p,
+      onOpen,
+      canSeeFinance,
+      onQuickUpdate,
+      onMarkComplete
+    }
+  ))));
 }
 function HistoryTab({ projects, onOpen }) {
   const all = projects.flatMap((p) => p.updates.map((u) => ({ ...u, project: p }))).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
