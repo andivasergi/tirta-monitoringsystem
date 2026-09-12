@@ -182,6 +182,12 @@ function Unlock(props) {
   return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("rect", { x: "5", y: "11", width: "14", height: "10", rx: "2" }), /* @__PURE__ */ React.createElement("path", { d: "M8 11V7a4 4 0 0 1 7.4-2" }));
 }
 const STORAGE_KEY = "tims-projects-v1";
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error("Waktu tunggu habis")), ms))
+  ]);
+}
 const FINANCE_PIN_KEY = "tims-finance-pin";
 const DEFAULT_FINANCE_PIN = "1234";
 const STATUS = ["Terjadwal", "Berlangsung", "Tertunda", "Selesai"];
@@ -1103,7 +1109,7 @@ function App() {
       unsubRef.current = null;
     }
     try {
-      const res = await window.storage.get(STORAGE_KEY, true);
+      const res = await withTimeout(window.storage.get(STORAGE_KEY, true), 8e3);
       if (res && res.value) {
         setProjects(JSON.parse(res.value));
       } else {
@@ -1113,7 +1119,7 @@ function App() {
       const seed = seedData();
       setProjects(seed);
       try {
-        await window.storage.set(STORAGE_KEY, JSON.stringify(seed), true);
+        await withTimeout(window.storage.set(STORAGE_KEY, JSON.stringify(seed), true), 8e3);
       } catch (e2) {
       }
     }
