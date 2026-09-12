@@ -1125,7 +1125,7 @@ function App() {
       const seed = seedData();
       setProjects(seed);
       try {
-        await withTimeout(window.storage.set(STORAGE_KEY, JSON.stringify(seed), true), 8e3);
+        await withTimeout(window.storage.set(STORAGE_KEY, JSON.stringify(seed), true), 25e3);
         dataOk = true;
       } catch (e2) {
         dataOk = false;
