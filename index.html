@@ -1110,10 +1110,12 @@ function App() {
       unsubRef.current();
       unsubRef.current = null;
     }
+    let dataOk = false;
     try {
       const res = await withTimeout(window.storage.get(STORAGE_KEY, true), 8e3);
       if (res && res.value) {
         setProjects(JSON.parse(res.value));
+        dataOk = true;
       } else {
         throw new Error("empty");
       }
@@ -1122,11 +1124,14 @@ function App() {
       setProjects(seed);
       try {
         await withTimeout(window.storage.set(STORAGE_KEY, JSON.stringify(seed), true), 8e3);
+        dataOk = true;
       } catch (e2) {
+        dataOk = false;
       }
     }
+    setFirebaseReady(!!window.__firebaseReady && dataOk);
     setLoading(false);
-    if (typeof window.subscribeStorage === "function") {
+    if (typeof window.subscribeStorage === "function" && dataOk) {
       unsubRef.current = window.subscribeStorage(STORAGE_KEY, (rawValue) => {
         try {
           setProjects(JSON.parse(rawValue));
@@ -1149,7 +1154,6 @@ function App() {
       } catch (e) {
       }
     }
-    setFirebaseReady(!!window.__firebaseReady);
     await loadAndSubscribe();
     setRefreshing(false);
   }
