@@ -1077,6 +1077,7 @@ function App() {
   const [financePin, setFinancePin] = useState(DEFAULT_FINANCE_PIN);
   const [financeUnlocked, setFinanceUnlocked] = useState(false);
   const [firebaseReady, setFirebaseReady] = useState(() => typeof window !== "undefined" && !!window.__firebaseReady);
+  const [syncError, setSyncError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const unsubRef = useRef(null);
   useEffect(() => {
@@ -1111,6 +1112,7 @@ function App() {
       unsubRef.current = null;
     }
     let dataOk = false;
+    let lastError = "";
     try {
       const res = await withTimeout(window.storage.get(STORAGE_KEY, true), 8e3);
       if (res && res.value) {
@@ -1127,8 +1129,10 @@ function App() {
         dataOk = true;
       } catch (e2) {
         dataOk = false;
+        lastError = e2 && e2.message || String(e2);
       }
     }
+    setSyncError(lastError);
     setFirebaseReady(!!window.__firebaseReady && dataOk);
     setLoading(false);
     if (typeof window.subscribeStorage === "function" && dataOk) {
@@ -1333,7 +1337,8 @@ function App() {
         onToggleFinance: () => financeUnlocked ? lockFinance() : setScreen("financeAuth"),
         firebaseReady,
         refreshing,
-        onRefresh: refreshData
+        onRefresh: refreshData,
+        syncError
       }
     ), tab === "projects" && /* @__PURE__ */ React.createElement(
       ProjectsList,
@@ -1440,7 +1445,7 @@ function ProgressBar({ value, height = 6 }) {
 function Header({ title, subtitle, right }) {
   return /* @__PURE__ */ React.createElement("div", { style: { padding: "20px 16px 12px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 } }, /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "Space Grotesk, sans-serif", fontSize: 20, fontWeight: 700, letterSpacing: 0.2 } }, title), subtitle && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginTop: 2 } }, subtitle)), right);
 }
-function Dashboard({ projects, onOpen, onGoProjects, onOpenData, canSeeFinance, onToggleFinance, firebaseReady, refreshing, onRefresh }) {
+function Dashboard({ projects, onOpen, onGoProjects, onOpenData, canSeeFinance, onToggleFinance, firebaseReady, refreshing, onRefresh, syncError }) {
   const counts = {
     total: projects.length,
     Berlangsung: projects.filter((p) => p.status === "Berlangsung").length,
@@ -1551,6 +1556,18 @@ function Dashboard({ projects, onOpen, onGoProjects, onOpenData, canSeeFinance, 
     },
     /* @__PURE__ */ React.createElement("span", { style: { width: 7, height: 7, borderRadius: 4, background: PAYMENT_COLOR["Belum Dibayar"] } }),
     "Mode lokal \u2014 data tidak tersinkron ke perangkat lain"
+  ), !firebaseReady && syncError && /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        marginTop: 6,
+        fontSize: 11,
+        color: COLORS.muted,
+        fontFamily: "JetBrains Mono, monospace"
+      }
+    },
+    "Detail error: ",
+    syncError
   )), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 } }, /* @__PURE__ */ React.createElement(StatTile, { label: "Total proyek", value: counts.total }), /* @__PURE__ */ React.createElement(StatTile, { label: "Berlangsung", value: counts.Berlangsung, color: STATUS_COLOR.Berlangsung }), /* @__PURE__ */ React.createElement(StatTile, { label: "Tertunda", value: counts.Tertunda, color: STATUS_COLOR.Tertunda }), /* @__PURE__ */ React.createElement(StatTile, { label: "Selesai", value: counts.Selesai, color: STATUS_COLOR.Selesai }), canSeeFinance ? /* @__PURE__ */ React.createElement(StatTile, { label: "Piutang", value: formatRupiahShort(piutang), color: piutang > 0 ? PAYMENT_COLOR["Belum Dibayar"] : COLORS.text }) : /* @__PURE__ */ React.createElement(
     "button",
     {
