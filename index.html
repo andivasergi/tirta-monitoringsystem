@@ -1104,31 +1104,27 @@ function App() {
     }
     try {
       const res = await window.storage.get(STORAGE_KEY, true);
-      if (!(res && res.value)) throw new Error("empty");
+      if (res && res.value) {
+        setProjects(JSON.parse(res.value));
+      } else {
+        throw new Error("empty");
+      }
     } catch (e) {
       const seed = seedData();
+      setProjects(seed);
       try {
         await window.storage.set(STORAGE_KEY, JSON.stringify(seed), true);
       } catch (e2) {
-        setProjects(seed);
       }
     }
+    setLoading(false);
     if (typeof window.subscribeStorage === "function") {
       unsubRef.current = window.subscribeStorage(STORAGE_KEY, (rawValue) => {
         try {
           setProjects(JSON.parse(rawValue));
         } catch (e) {
         }
-        setLoading(false);
       });
-    } else {
-      try {
-        const res = await window.storage.get(STORAGE_KEY, true);
-        setProjects(JSON.parse(res.value));
-      } catch (e) {
-        setProjects(seedData());
-      }
-      setLoading(false);
     }
   }
   useEffect(() => {
