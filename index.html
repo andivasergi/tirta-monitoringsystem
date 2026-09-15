@@ -20,7 +20,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <!-- Babel standalone: mengubah kode JSX di bawah menjadi JS biasa langsung di browser -->
-<!-- Aplikasi + sinkronisasi real-time Firebase, sudah dikompilasi dari JSX -> JS -->
+<!-- Aplikasi + sinkronisasi real-time Firebase (Realtime Database), sudah dikompilasi dari JSX -> JS -->
 <script type="module">
 const { useState, useEffect, useRef } = React;
 window.storage = {
@@ -47,15 +47,16 @@ window.storage = {
 const firebaseConfig = {
   apiKey: "AIzaSyAW95Jr4o7FpnQakSUcKyQum4Y5j0m7Neg",
   authDomain: "tims-27c55.firebaseapp.com",
+  databaseURL: "https://tims-27c55-default-rtdb.firebaseio.com",
   projectId: "tims-27c55",
   storageBucket: "tims-27c55.firebasestorage.app",
   messagingSenderId: "338858868589",
-  appId: "1:338858868589:web:de4e18f498bf3d7d1f6464"
+  appId: "1:338858868589:web:72dbecb7a7b3bdc21f6464"
 };
 function firebaseTimeout(ms) {
   return new Promise((_, reject) => setTimeout(() => reject(new Error("Firebase timeout")), ms));
 }
-let firestoreMod = null;
+let dbMod = null;
 let authMod = null;
 let cachedDb = null;
 let cachedAuth = null;
@@ -63,12 +64,10 @@ let modulesReady = false;
 async function setupFirebase() {
   if (!modulesReady) {
     const { initializeApp } = await import("https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js");
-    firestoreMod = await import("https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js");
+    dbMod = await import("https://www.gstatic.com/firebasejs/12.18.0/firebase-database.js");
     authMod = await import("https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js");
     const app = initializeApp(firebaseConfig);
-    cachedDb = firestoreMod.initializeFirestore(app, {
-      experimentalAutoDetectLongPolling: true
-    });
+    cachedDb = dbMod.getDatabase(app);
     cachedAuth = authMod.getAuth(app);
     modulesReady = true;
   }
@@ -81,30 +80,31 @@ async function setupFirebase() {
     });
     authMod.signInAnonymously(cachedAuth).catch(reject);
   });
-  const { doc, getDoc, setDoc, onSnapshot } = firestoreMod;
+  const { ref, get, set, onValue } = dbMod;
   const db = cachedDb;
+  const pathFor = (key) => "tims-shared/" + key;
   window.storage = {
     get: async (key) => {
-      const snap = await getDoc(doc(db, "tims-shared", key));
-      if (!snap.exists() || snap.data().value == null) {
+      const snap = await get(ref(db, pathFor(key)));
+      if (!snap.exists() || snap.val() == null) {
         throw new Error("Key not found: " + key);
       }
-      return { key, value: snap.data().value, shared: true };
+      return { key, value: snap.val(), shared: true };
     },
     set: async (key, value) => {
-      await setDoc(doc(db, "tims-shared", key), { value, updatedAt: Date.now() });
+      await set(ref(db, pathFor(key)), value);
       return { key, value, shared: true };
     },
     delete: async (key) => {
-      await setDoc(doc(db, "tims-shared", key), { value: null, updatedAt: Date.now() });
+      await set(ref(db, pathFor(key)), null);
       return { key, deleted: true, shared: true };
     },
     list: async () => ({ keys: [], shared: true })
   };
   window.subscribeStorage = (key, callback) => {
-    return onSnapshot(doc(db, "tims-shared", key), (snap) => {
-      if (snap.exists() && snap.data().value != null) {
-        callback(snap.data().value);
+    return onValue(ref(db, pathFor(key)), (snap) => {
+      if (snap.exists() && snap.val() != null) {
+        callback(snap.val());
       }
     });
   };
@@ -114,7 +114,7 @@ window.retryFirebaseSync = async function() {
   try {
     await Promise.race([setupFirebase(), firebaseTimeout(15e3)]);
     window.__firebaseReady = true;
-    console.log("TIMS: tersambung ke Firebase \u2014 data tersinkron real-time.");
+    console.log("TIMS: tersambung ke Firebase (Realtime Database) \u2014 data tersinkron real-time.");
     return true;
   } catch (e) {
     window.__firebaseReady = false;
