@@ -20,7 +20,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <!-- Babel standalone: mengubah kode JSX di bawah menjadi JS biasa langsung di browser -->
-<!-- Aplikasi + sinkronisasi Firebase + invoice PDF + laporan bulanan Excel, sudah dikompilasi dari JSX -> JS -->
+<!-- Aplikasi + sinkronisasi Firebase + invoice PDF + laporan bulanan 5-sheet, sudah dikompilasi dari JSX -> JS -->
 <script type="module">
 const { useState, useEffect, useRef } = React;
 window.storage = {
@@ -363,70 +363,57 @@ window.generateMonthlyReportXlsx = async function({ projects, month, year }) {
     "Desember"
   ];
   const monthLabel = monthNames[month] + " " + year;
-  const monthUpdates = [];
+  const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59, 999);
+  const allUpdates = [];
   projects.forEach((p) => {
     (p.updates || []).forEach((u) => {
-      const d = new Date(u.timestamp);
-      if (d.getMonth() === month && d.getFullYear() === year) {
-        monthUpdates.push({
-          tanggal: d,
-          rigName: p.rigName,
-          client: p.client,
-          author: u.author,
-          activity: u.activity,
-          progress: u.progress,
-          status: u.status,
-          findings: (u.findings || []).map((f) => f.severity + ": " + f.description).join(" | ")
-        });
-      }
+      allUpdates.push({
+        tanggal: new Date(u.timestamp),
+        rigName: p.rigName,
+        client: p.client,
+        author: u.author,
+        activity: u.activity,
+        progress: u.progress,
+        status: u.status,
+        findings: (u.findings || []).map((f) => f.severity + ": " + f.description).join(" | ")
+      });
     });
   });
-  monthUpdates.sort((a, b) => a.tanggal - b.tanggal);
-  const activeProjectNames = new Set(monthUpdates.map((u) => u.rigName));
-  const relevantProjects = projects.filter((p) => activeProjectNames.has(p.rigName) || p.status !== "Selesai");
-  const totalKontrak = projects.reduce((s, p) => s + (p.contractValue || 0), 0);
-  const totalDiterima = projects.reduce(
-    (s, p) => s + (p.paymentStatus === "Lunas" ? p.finalPaymentAmount || p.contractValue || 0 : p.dpAmount || 0),
-    0
-  );
-  const totalPiutang = projects.reduce((s, p) => s + (p.paymentStatus !== "Lunas" ? p.finalPaymentAmount || 0 : 0), 0);
-  const countByStatus = {};
-  projects.forEach((p) => {
-    countByStatus[p.status] = (countByStatus[p.status] || 0) + 1;
-  });
-  const ringkasanRows = [
-    ["LAPORAN BULANAN TIMS \u2013 " + monthLabel.toUpperCase()],
-    ["PT Tirtaamerta Dayautama"],
-    [],
-    ["Ringkasan Umum", ""],
-    ["Total proyek tercatat", projects.length],
-    ["Proyek Terjadwal", countByStatus["Terjadwal"] || 0],
-    ["Proyek Berlangsung", countByStatus["Berlangsung"] || 0],
-    ["Proyek Tertunda", countByStatus["Tertunda"] || 0],
-    ["Proyek Selesai", countByStatus["Selesai"] || 0],
-    ["Jumlah update bulan ini", monthUpdates.length],
-    [],
-    ["Ringkasan Keuangan (seluruh proyek, akumulatif)", ""],
-    ["Total nilai kontrak", totalKontrak],
-    ["Total sudah diterima (estimasi)", totalDiterima],
-    ["Total piutang (belum lunas)", totalPiutang]
-  ];
-  const wsRingkasan = XLSX.utils.aoa_to_sheet(ringkasanRows);
-  wsRingkasan["!cols"] = [{ wch: 34 }, { wch: 20 }];
-  const keuanganHeader = ["Proyek", "Klien", "Jenis Layanan", "Status Proyek", "Harga Kontrak", "Pembayaran DP", "Pembayaran FP", "Status Pembayaran", "Piutang"];
-  const keuanganRows = projects.map((p) => [
-    p.rigName,
-    p.client,
-    p.equipmentType,
-    p.status,
-    p.contractValue || 0,
-    p.dpAmount || 0,
-    p.finalPaymentAmount || 0,
-    p.paymentStatus,
-    p.paymentStatus !== "Lunas" ? p.finalPaymentAmount || 0 : 0
-  ]);
-  const wsKeuangan = XLSX.utils.aoa_to_sheet([keuanganHeader, ...keuanganRows]);
-  wsKeuangan["!cols"] = [
+  allUpdates.sort((a, b) => a.tanggal - b.tanggal);
+  const monthUpdates = allUpdates.filter((u) => u.tanggal.getMonth() === month && u.tanggal.getFullYear() === year);
+  const cumulativeUpdates = allUpdates.filter((u) => u.tanggal <= endOfMonth);
+  const activeProjectNamesThisMonth = new Set(monthUpdates.map((u) => u.rigName));
+  const activeProjectsThisMonth = projects.filter((p) => activeProjectNamesThisMonth.has(p.rigName));
+  function updatesToRows(list) {
+    const header = ["Tanggal", "Proyek", "Klien", "Pelapor", "Aktivitas", "Progres (%)", "Status", "Temuan"];
+    const rows = list.map((u) => [
+      u.tanggal.toLocaleDateString("id-ID", { day: "2-digit", month: "2-digit", year: "numeric" }),
+      u.rigName,
+      u.client,
+      u.author,
+      u.activity,
+      u.progress,
+      u.status,
+      u.findings
+    ]);
+    return [header, ...rows];
+  }
+  function projectsToFinanceRows(list) {
+    const header = ["Proyek", "Klien", "Jenis Layanan", "Status Proyek", "Harga Kontrak", "Pembayaran DP", "Pembayaran FP", "Status Pembayaran", "Piutang"];
+    const rows = list.map((p) => [
+      p.rigName,
+      p.client,
+      p.equipmentType,
+      p.status,
+      p.contractValue || 0,
+      p.dpAmount || 0,
+      p.finalPaymentAmount || 0,
+      p.paymentStatus,
+      p.paymentStatus !== "Lunas" ? p.finalPaymentAmount || 0 : 0
+    ]);
+    return [header, ...rows];
+  }
+  const financeColWidths = [
     { wch: 28 },
     { wch: 22 },
     { wch: 22 },
@@ -437,19 +424,7 @@ window.generateMonthlyReportXlsx = async function({ projects, month, year }) {
     { wch: 16 },
     { wch: 16 }
   ];
-  const pekerjaanHeader = ["Tanggal", "Proyek", "Klien", "Pelapor", "Aktivitas", "Progres (%)", "Status", "Temuan"];
-  const pekerjaanRows = monthUpdates.map((u) => [
-    u.tanggal.toLocaleDateString("id-ID", { day: "2-digit", month: "2-digit", year: "numeric" }),
-    u.rigName,
-    u.client,
-    u.author,
-    u.activity,
-    u.progress,
-    u.status,
-    u.findings
-  ]);
-  const wsPekerjaan = XLSX.utils.aoa_to_sheet([pekerjaanHeader, ...pekerjaanRows]);
-  wsPekerjaan["!cols"] = [
+  const workColWidths = [
     { wch: 12 },
     { wch: 26 },
     { wch: 20 },
@@ -459,10 +434,60 @@ window.generateMonthlyReportXlsx = async function({ projects, month, year }) {
     { wch: 14 },
     { wch: 40 }
   ];
+  const totalKontrak = projects.reduce((s, p) => s + (p.contractValue || 0), 0);
+  const totalDiterima = projects.reduce(
+    (s, p) => s + (p.paymentStatus === "Lunas" ? p.finalPaymentAmount || p.contractValue || 0 : p.dpAmount || 0),
+    0
+  );
+  const totalPiutang = projects.reduce((s, p) => s + (p.paymentStatus !== "Lunas" ? p.finalPaymentAmount || 0 : 0), 0);
+  const countByStatus = {};
+  projects.forEach((p) => {
+    countByStatus[p.status] = (countByStatus[p.status] || 0) + 1;
+  });
+  const kontrakAktifBulanIni = activeProjectsThisMonth.reduce((s, p) => s + (p.contractValue || 0), 0);
+  const piutangAktifBulanIni = activeProjectsThisMonth.reduce(
+    (s, p) => s + (p.paymentStatus !== "Lunas" ? p.finalPaymentAmount || 0 : 0),
+    0
+  );
+  const ringkasanRows = [
+    ["LAPORAN BULANAN TIMS \u2013 " + monthLabel.toUpperCase()],
+    ["PT Tirtaamerta Dayautama"],
+    [],
+    ["Kondisi Seluruh Proyek (kumulatif, saat laporan dibuat)", ""],
+    ["Total proyek tercatat", projects.length],
+    ["Proyek Terjadwal", countByStatus["Terjadwal"] || 0],
+    ["Proyek Berlangsung", countByStatus["Berlangsung"] || 0],
+    ["Proyek Tertunda", countByStatus["Tertunda"] || 0],
+    ["Proyek Selesai", countByStatus["Selesai"] || 0],
+    ["Total nilai kontrak (semua proyek)", totalKontrak],
+    ["Total sudah diterima (estimasi, semua proyek)", totalDiterima],
+    ["Total piutang (semua proyek, belum lunas)", totalPiutang],
+    [],
+    ["Aktivitas di Bulan " + monthLabel, ""],
+    ["Jumlah update bulan ini", monthUpdates.length],
+    ["Jumlah proyek dengan aktivitas bulan ini", activeProjectsThisMonth.length],
+    ["Total nilai kontrak (proyek aktif bulan ini)", kontrakAktifBulanIni],
+    ["Total piutang (proyek aktif bulan ini)", piutangAktifBulanIni],
+    [],
+    ["Akumulasi s.d. Akhir Bulan " + monthLabel, ""],
+    ["Jumlah update s.d. bulan ini", cumulativeUpdates.length]
+  ];
+  const wsRingkasan = XLSX.utils.aoa_to_sheet(ringkasanRows);
+  wsRingkasan["!cols"] = [{ wch: 40 }, { wch: 20 }];
+  const wsKeuanganSemua = XLSX.utils.aoa_to_sheet(projectsToFinanceRows(projects));
+  wsKeuanganSemua["!cols"] = financeColWidths;
+  const wsKeuanganBulanIni = XLSX.utils.aoa_to_sheet(projectsToFinanceRows(activeProjectsThisMonth));
+  wsKeuanganBulanIni["!cols"] = financeColWidths;
+  const wsPekerjaanBulanIni = XLSX.utils.aoa_to_sheet(updatesToRows(monthUpdates));
+  wsPekerjaanBulanIni["!cols"] = workColWidths;
+  const wsPekerjaanAkumulasi = XLSX.utils.aoa_to_sheet(updatesToRows(cumulativeUpdates));
+  wsPekerjaanAkumulasi["!cols"] = workColWidths;
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, wsRingkasan, "Ringkasan");
-  XLSX.utils.book_append_sheet(wb, wsKeuangan, "Rekap Keuangan");
-  XLSX.utils.book_append_sheet(wb, wsPekerjaan, "Rekap Pekerjaan");
+  XLSX.utils.book_append_sheet(wb, wsKeuanganSemua, "Keuangan - Semua Proyek");
+  XLSX.utils.book_append_sheet(wb, wsKeuanganBulanIni, "Keuangan - Aktif Bln Ini");
+  XLSX.utils.book_append_sheet(wb, wsPekerjaanBulanIni, "Pekerjaan - Bulan Ini");
+  XLSX.utils.book_append_sheet(wb, wsPekerjaanAkumulasi, "Pekerjaan - Akumulasi");
   const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
   return out;
 };
@@ -2205,7 +2230,7 @@ function DataBackup({ projects, onBack, onImport, canSeeFinance, financePin, onC
     },
     "Impor dari file cadangan",
     /* @__PURE__ */ React.createElement("input", { type: "file", accept: "application/json", onChange: handleImportFile, style: { display: "none" } })
-  ), message && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.accent, marginTop: 12 } }, message), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, marginTop: 28, marginBottom: 8 } }, "Laporan bulanan"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.muted, marginBottom: 10 } }, "Rekap keuangan & pekerjaan seluruh proyek dalam 1 file Excel (3 sheet: Ringkasan, Rekap Keuangan, Rekap Pekerjaan)."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("select", { value: reportMonth, onChange: (e) => setReportMonth(Number(e.target.value)), style: { flex: 1 } }, ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map(
+  ), message && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.accent, marginTop: 12 } }, message), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, marginTop: 28, marginBottom: 8 } }, "Laporan bulanan"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.muted, marginBottom: 10 } }, "Rekap keuangan & pekerjaan seluruh proyek dalam 1 file Excel (5 sheet: Ringkasan, Keuangan Semua Proyek, Keuangan Aktif Bulan Ini, Pekerjaan Bulan Ini, Pekerjaan Akumulasi)."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("select", { value: reportMonth, onChange: (e) => setReportMonth(Number(e.target.value)), style: { flex: 1 } }, ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map(
     (m, i) => /* @__PURE__ */ React.createElement("option", { key: m, value: i }, m)
   )), /* @__PURE__ */ React.createElement("select", { value: reportYear, onChange: (e) => setReportYear(Number(e.target.value)), style: { width: 100 } }, [now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1].map((y) => /* @__PURE__ */ React.createElement("option", { key: y, value: y }, y)))), /* @__PURE__ */ React.createElement("button", { onClick: handleDownloadReport, disabled: reportBusy, className: "ig-btn-primary", style: { width: "100%" } }, reportBusy ? "Menyusun laporan..." : "Unduh Laporan (.xlsx)"), reportMessage && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: reportMessage.startsWith("Gagal") ? SEVERITY_COLOR.Kritis : COLORS.accent, marginTop: 8 } }, reportMessage), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, marginTop: 28, marginBottom: 8 } }, "Akses data keuangan"), canSeeFinance ? /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(Field, { label: "Ubah PIN keuangan" }, /* @__PURE__ */ React.createElement(
     "input",
