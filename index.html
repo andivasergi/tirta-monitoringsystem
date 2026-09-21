@@ -20,7 +20,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <!-- Babel standalone: mengubah kode JSX di bawah menjadi JS biasa langsung di browser -->
-<!-- Aplikasi lengkap: Firebase + invoice PDF + laporan bulanan + Penawaran/Tender multi-item + revisi negosiasi + status Gagal + vendor/COGS + notifikasi + approval, sudah dikompilasi dari JSX -> JS -->
+<!-- Aplikasi lengkap: Firebase + invoice PDF + laporan bulanan + Penawaran/Tender multi-item + revisi negosiasi (selalu terlihat) + status Gagal + vendor/COGS + notifikasi + approval, sudah dikompilasi dari JSX -> JS -->
 <script type="module">
 const { useState, useEffect, useRef } = React;
 window.storage = {
@@ -3207,27 +3207,59 @@ function TenderPromotionBox({ project, approvalUnlocked, onAttachWO, onPromoteBy
     ))
   );
 }
-function RevisionHistory({ project, onAddRevision, canAddMore }) {
+function RevisionHistory({ project, onAddRevision, canAddMore, canSeeFinance }) {
   const revisions = project.revisions || [];
-  return /* @__PURE__ */ React.createElement("div", { style: { marginTop: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600 } }, "Riwayat Penawaran & Negosiasi"), canAddMore && /* @__PURE__ */ React.createElement("button", { onClick: onAddRevision, className: "ig-btn-ghost", style: { display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", fontSize: 12 } }, /* @__PURE__ */ React.createElement(Plus, { size: 13 }), " Catat Revisi")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, revisions.map((r, i) => {
-    const isLatest = i === revisions.length - 1;
-    return /* @__PURE__ */ React.createElement(
-      "div",
+  return /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        marginTop: 14,
+        background: STATUS_COLOR["Penawaran/Tender"] + "0D",
+        border: `1px solid ${STATUS_COLOR["Penawaran/Tender"]}44`,
+        borderRadius: 12,
+        padding: 14
+      }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, color: STATUS_COLOR["Penawaran/Tender"] } }, "Riwayat Penawaran & Negosiasi")),
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: COLORS.muted, marginBottom: 12, lineHeight: 1.5 } }, canAddMore ? "Setiap kali ada negosiasi harga atau perubahan pekerjaan, catat sebagai revisi baru di sini \u2014 riwayat sebelumnya tetap tersimpan." : "Riwayat penawaran sebelum proyek ini dipromosikan menjadi proyek berjalan."),
+    canAddMore && /* @__PURE__ */ React.createElement(
+      "button",
       {
-        key: r.id || i,
+        onClick: onAddRevision,
+        className: "ig-btn-primary",
         style: {
-          background: COLORS.panelAlt,
-          border: `1px solid ${isLatest ? COLORS.accent + "77" : COLORS.border}`,
-          borderRadius: 10,
-          padding: 12
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 6,
+          marginBottom: 12,
+          background: STATUS_COLOR["Penawaran/Tender"]
         }
       },
-      /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 600 } }, r.label, " ", isLatest && /* @__PURE__ */ React.createElement("span", { style: { color: COLORS.accent, fontWeight: 500 } }, "(aktif)")), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontFamily: "JetBrains Mono, monospace" } }, formatRupiah(r.totalValue))),
-      /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted, marginTop: 3 } }, formatDateTime(r.createdAt)),
-      r.notes && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, marginTop: 6 } }, r.notes),
-      r.items && r.items.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted, marginTop: 6 } }, r.items.map((it, j) => `${it.jenisLayanan} ${it.qty}${it.unit ? " " + it.unit : ""}`).join(", "))
-    );
-  })));
+      /* @__PURE__ */ React.createElement(Plus, { size: 15 }),
+      " Catat Revisi / Negosiasi Baru"
+    ),
+    /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, revisions.map((r, i) => {
+      const isLatest = i === revisions.length - 1;
+      return /* @__PURE__ */ React.createElement(
+        "div",
+        {
+          key: r.id || i,
+          style: {
+            background: COLORS.panel,
+            border: `1px solid ${isLatest ? STATUS_COLOR["Penawaran/Tender"] : COLORS.border}`,
+            borderRadius: 10,
+            padding: 12
+          }
+        },
+        /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 600 } }, r.label, " ", isLatest && /* @__PURE__ */ React.createElement("span", { style: { color: STATUS_COLOR["Penawaran/Tender"], fontWeight: 700, fontSize: 11 } }, "\\u25CF AKTIF")), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontFamily: "JetBrains Mono, monospace" } }, canSeeFinance ? formatRupiah(r.totalValue) : "\u2022\u2022\u2022\u2022\u2022\u2022")),
+        /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted, marginTop: 3 } }, formatDateTime(r.createdAt)),
+        r.notes && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, marginTop: 6 } }, r.notes),
+        r.items && r.items.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted, marginTop: 6 } }, r.items.map((it, j) => `${it.jenisLayanan} ${it.qty}${it.unit ? " " + it.unit : ""}`).join(", "))
+      );
+    }))
+  );
 }
 function TenderRevisionForm({ project, onBack, onSave }) {
   const [items, setItems] = useState(
@@ -3310,7 +3342,15 @@ function ProjectDetail({
       onRequestApprovalUnlock,
       onMarkFailed
     }
-  ), (project.status === "Penawaran/Tender" || project.revisions && project.revisions.length > 1) && canSeeFinance && /* @__PURE__ */ React.createElement(RevisionHistory, { project, onAddRevision, canAddMore: project.status === "Penawaran/Tender" }), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12, color: COLORS.muted, marginBottom: 5 } }, /* @__PURE__ */ React.createElement("span", null, "Progres inspeksi"), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "JetBrains Mono, monospace", color: COLORS.text } }, project.progress, "%")), /* @__PURE__ */ React.createElement(ProgressBar, { value: project.progress, height: 8 })), /* @__PURE__ */ React.createElement("div", { style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "4px 14px", marginTop: 16 } }, /* @__PURE__ */ React.createElement(InfoRow, { label: "Klien", value: project.client }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Jenis layanan", value: project.equipmentType }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Lokasi", value: project.location }), /* @__PURE__ */ React.createElement(InfoRow, { label: "PIC Input", value: project.picInput }), /* @__PURE__ */ React.createElement(InfoRow, { label: "PIC Lapangan", value: project.picLapangan }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Mulai", value: formatDate(project.startDate) })), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginBottom: 5 } }, "Target selesai"), /* @__PURE__ */ React.createElement(
+  ), (project.status === "Penawaran/Tender" || project.revisions && project.revisions.length > 1) && /* @__PURE__ */ React.createElement(
+    RevisionHistory,
+    {
+      project,
+      onAddRevision,
+      canAddMore: project.status === "Penawaran/Tender",
+      canSeeFinance
+    }
+  ), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12, color: COLORS.muted, marginBottom: 5 } }, /* @__PURE__ */ React.createElement("span", null, "Progres inspeksi"), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "JetBrains Mono, monospace", color: COLORS.text } }, project.progress, "%")), /* @__PURE__ */ React.createElement(ProgressBar, { value: project.progress, height: 8 })), /* @__PURE__ */ React.createElement("div", { style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "4px 14px", marginTop: 16 } }, /* @__PURE__ */ React.createElement(InfoRow, { label: "Klien", value: project.client }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Jenis layanan", value: project.equipmentType }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Lokasi", value: project.location }), /* @__PURE__ */ React.createElement(InfoRow, { label: "PIC Input", value: project.picInput }), /* @__PURE__ */ React.createElement(InfoRow, { label: "PIC Lapangan", value: project.picLapangan }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Mulai", value: formatDate(project.startDate) })), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginBottom: 5 } }, "Target selesai"), /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "date",
