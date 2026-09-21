@@ -20,7 +20,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <!-- Babel standalone: mengubah kode JSX di bawah menjadi JS biasa langsung di browser -->
-<!-- Aplikasi lengkap: Firebase + invoice PDF + laporan bulanan + Penawaran/Tender multi-item + revisi negosiasi (selalu terlihat) + status Gagal + vendor/COGS + notifikasi + approval, sudah dikompilasi dari JSX -> JS -->
+<!-- Aplikasi lengkap: Firebase + invoice PDF + quotation/penawaran PDF + laporan bulanan + Penawaran/Tender multi-item + revisi negosiasi + status Gagal + vendor/COGS + notifikasi + approval, sudah dikompilasi dari JSX -> JS -->
 <script type="module">
 const { useState, useEffect, useRef } = React;
 window.storage = {
@@ -345,6 +345,223 @@ window.generateInvoicePdf = async function(opts) {
 };
 window.romanMonth = function(monthIndex0based) {
   return ROMAN_MONTHS[monthIndex0based];
+};
+function formatRupiahPlainQ(n) {
+  return Math.round(n).toLocaleString("id-ID");
+}
+const ROMAN_MONTHS_Q = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
+window.suggestQuotationNo = function(seq, date) {
+  const num = String(seq).padStart(3, "0");
+  const roman = ROMAN_MONTHS_Q[date.getMonth()];
+  return `${num}/TD-DIRUT/PH/${roman}/${date.getFullYear()}`;
+};
+window.generateQuotationPdf = async function(opts) {
+  const { PDFDocument, StandardFonts, rgb } = await import("https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/+esm");
+  const {
+    refNo,
+    cityDate,
+    perihal,
+    clientName,
+    clientAddress,
+    openingText,
+    items,
+    closingText,
+    termsText,
+    directorTitle
+  } = opts;
+  const doc = await PDFDocument.create();
+  let page = doc.addPage([595.28, 841.89]);
+  let { width, height } = page.getSize();
+  const font = await doc.embedFont(StandardFonts.Helvetica);
+  const fontBold = await doc.embedFont(StandardFonts.HelveticaBold);
+  const margin = 50;
+  const footerReserve = 105;
+  let y = height - 40;
+  const black = rgb(0.1, 0.13, 0.15);
+  const navy = rgb(0.02, 0.15, 0.45);
+  const muted = rgb(0.4, 0.44, 0.47);
+  const lineColor = rgb(0.7, 0.73, 0.75);
+  const logoImg = await doc.embedPng(base64ToBytes(TIMS_LOGO_B64));
+  const kanImg = await doc.embedPng(base64ToBytes(TIMS_KAN_B64));
+  function drawFooter(p) {
+    const fy = 55;
+    p.drawLine({ start: { x: margin, y: fy + 34 }, end: { x: width - margin, y: fy + 34 }, thickness: 0.75, color: lineColor });
+    p.drawText("TIRTAAMERTA DAYAUTAMA I INSPEKSI \u2013 SERTIFIKASI", { x: margin, y: fy + 22, size: 8.5, font: fontBold, color: navy });
+    p.drawText("Jl. Rasuna Said No 58, Kel. Pekojan Kec. Pinang, Kota Tangerang \u2013 Banten 15142", { x: margin, y: fy + 10, size: 8, font, color: muted });
+    p.drawText("Phone: +62(21) 59731628  \xB7  Cellular: +6281288944613  \xB7  E-mail: admin@tirtaamertadayautama.com", { x: margin, y: fy - 2, size: 8, font, color: muted });
+  }
+  function newPage() {
+    drawFooter(page);
+    page = doc.addPage([595.28, 841.89]);
+    y = height - 40;
+  }
+  function ensureSpace(needed) {
+    if (y - needed < footerReserve) newPage();
+  }
+  function text(str, x, yy, o = {}) {
+    page.drawText(str, { x, y: yy, size: o.size || 10, font: o.bold ? fontBold : font, color: o.color || black });
+  }
+  function textWidth(str, size, bold) {
+    return (bold ? fontBold : font).widthOfTextAtSize(str, size);
+  }
+  function rightText(str, rx, yy, o = {}) {
+    const size = o.size || 10;
+    text(str, rx - textWidth(str, size, o.bold), yy, o);
+  }
+  function centerText(str, cx2, yy, o = {}) {
+    const size = o.size || 10;
+    text(str, cx2 - textWidth(str, size, o.bold) / 2, yy, o);
+  }
+  function hLine(x1, x2, yy, w, color) {
+    page.drawLine({ start: { x: x1, y: yy }, end: { x: x2, y: yy }, thickness: w || 1, color: color || lineColor });
+  }
+  function rect(x, yy, w, h, o = {}) {
+    page.drawRectangle({ x, y: yy, width: w, height: h, borderColor: o.borderColor || lineColor, borderWidth: o.borderWidth != null ? o.borderWidth : 1, color: o.fill });
+  }
+  function wrapText(str, maxWidth, size, bold) {
+    const words = String(str || "").split(/\s+/).filter(Boolean);
+    const lines = [];
+    let cur = "";
+    words.forEach((w) => {
+      const test = cur ? cur + " " + w : w;
+      if (textWidth(test, size, bold) > maxWidth && cur) {
+        lines.push(cur);
+        cur = w;
+      } else {
+        cur = test;
+      }
+    });
+    if (cur) lines.push(cur);
+    return lines.length ? lines : [""];
+  }
+  function drawParagraph(str, x, maxWidth, size, lineGap, o = {}) {
+    const lines = wrapText(str, maxWidth, size, o.bold);
+    lines.forEach((ln) => {
+      ensureSpace(lineGap + 4);
+      text(ln, x, y, { size, bold: o.bold, color: o.color });
+      y -= lineGap;
+    });
+  }
+  const logoH = 55;
+  const logoW = logoImg.width / logoImg.height * logoH;
+  page.drawImage(logoImg, { x: margin, y: y - logoH + 10, width: logoW, height: logoH });
+  text("PT. TIRTAAMERTA DAYAUTAMA", margin + logoW + 12, y - 10, { size: 15, bold: true, color: navy });
+  text("Technical Inspection & Certification", margin + logoW + 12, y - 26, { size: 9.5, color: muted });
+  const kanH = 42;
+  const kanW = kanImg.width / kanImg.height * kanH;
+  page.drawImage(kanImg, { x: width - margin - kanW, y: y - kanH + 15, width: kanW, height: kanH });
+  y -= 75;
+  hLine(margin, width - margin, y, 1.4, navy);
+  y -= 22;
+  rightText(cityDate, width - margin, y, { size: 10.5 });
+  y -= 24;
+  text("No. Ref", margin, y, { size: 10 });
+  text(":", margin + 65, y, { size: 10 });
+  text(refNo, margin + 75, y, { size: 10, bold: true });
+  y -= 15;
+  text("Perihal", margin, y, { size: 10 });
+  text(":", margin + 65, y, { size: 10 });
+  const perihalLines = wrapText(perihal, width - margin - (margin + 75), 10, true);
+  perihalLines.forEach((ln, i) => {
+    text(ln, margin + 75, y, { size: 10, bold: true });
+    if (i < perihalLines.length - 1) y -= 13;
+  });
+  y -= 26;
+  text("Kepada Yth.", margin, y, { size: 10 });
+  y -= 14;
+  text(clientName, margin, y, { size: 10.5, bold: true });
+  y -= 14;
+  (clientAddress || "").split("\n").filter(Boolean).forEach((ln) => {
+    text(ln, margin, y, { size: 10 });
+    y -= 13;
+  });
+  y -= 10;
+  text("Dengan hormat,", margin, y, { size: 10 });
+  y -= 15;
+  drawParagraph(openingText, margin, width - margin * 2, 10, 13.5);
+  y -= 12;
+  const tableX = margin;
+  const tableW = width - margin * 2;
+  const colNoW = 26;
+  const colQtyW = 55;
+  const colUnitW = 45;
+  const colHargaW = 95;
+  const colTotalW = 100;
+  const colDescW = tableW - colNoW - colQtyW - colUnitW - colHargaW - colTotalW;
+  const headerRowH = 22;
+  ensureSpace(headerRowH + 30);
+  const tableTop = y;
+  rect(tableX, tableTop - headerRowH, tableW, headerRowH, { borderWidth: 1 });
+  let cx = tableX;
+  [colNoW, colDescW, colQtyW, colUnitW, colHargaW].forEach((w) => {
+    cx += w;
+    page.drawLine({ start: { x: cx, y: tableTop }, end: { x: cx, y: tableTop - headerRowH }, thickness: 1, color: lineColor });
+  });
+  centerText("No", tableX + colNoW / 2, tableTop - 15, { size: 9.5, bold: true });
+  centerText("Description", tableX + colNoW + colDescW / 2, tableTop - 15, { size: 9.5, bold: true });
+  centerText("Qty", tableX + colNoW + colDescW + colQtyW / 2, tableTop - 15, { size: 9.5, bold: true });
+  centerText("Unit", tableX + colNoW + colDescW + colQtyW + colUnitW / 2, tableTop - 15, { size: 9.5, bold: true });
+  centerText("Harga Satuan", tableX + colNoW + colDescW + colQtyW + colUnitW + colHargaW / 2, tableTop - 15, { size: 9.5, bold: true });
+  centerText("Total", tableX + colNoW + colDescW + colQtyW + colUnitW + colHargaW + colTotalW / 2, tableTop - 15, { size: 9.5, bold: true });
+  y = tableTop - headerRowH;
+  let grandTotal = 0;
+  items.forEach((it, i) => {
+    const subtotal = (Number(it.qty) || 0) * (Number(it.hargaSatuan) || 0);
+    grandTotal += subtotal;
+    const descLines = wrapText(it.keterangan ? `${it.jenisLayanan} \u2013 ${it.keterangan}` : it.jenisLayanan, colDescW - 10, 9.5, false);
+    const h = Math.max(20, descLines.length * 12 + 8);
+    ensureSpace(h);
+    const rowTop = y;
+    rect(tableX, rowTop - h, tableW, h, { borderWidth: 1 });
+    let cx2 = tableX;
+    [colNoW, colDescW, colQtyW, colUnitW, colHargaW].forEach((w) => {
+      cx2 += w;
+      page.drawLine({ start: { x: cx2, y: rowTop }, end: { x: cx2, y: rowTop - h }, thickness: 1, color: lineColor });
+    });
+    centerText(String(i + 1), tableX + colNoW / 2, rowTop - 14, { size: 9.5 });
+    descLines.forEach((ln, li) => {
+      text(ln, tableX + colNoW + 5, rowTop - 14 - li * 12, { size: 9.5 });
+    });
+    centerText(String(it.qty), tableX + colNoW + colDescW + colQtyW / 2, rowTop - 14, { size: 9.5 });
+    centerText(it.unit || "-", tableX + colNoW + colDescW + colQtyW + colUnitW / 2, rowTop - 14, { size: 9.5 });
+    rightText(formatRupiahPlainQ(it.hargaSatuan), tableX + colNoW + colDescW + colQtyW + colUnitW + colHargaW - 6, rowTop - 14, { size: 9.5 });
+    rightText(formatRupiahPlainQ(subtotal), tableX + tableW - 6, rowTop - 14, { size: 9.5 });
+    y = rowTop - h;
+  });
+  const totalRowH = 22;
+  ensureSpace(totalRowH);
+  const totalColsW = colNoW + colDescW + colQtyW + colUnitW + colHargaW;
+  rect(tableX, y - totalRowH, totalColsW, totalRowH, { borderWidth: 1 });
+  rect(tableX + totalColsW, y - totalRowH, colTotalW, totalRowH, { borderWidth: 1 });
+  text("Total Amount", tableX + 8, y - 15, { size: 10, bold: true });
+  rightText(formatRupiahPlainQ(grandTotal), tableX + tableW - 6, y - 15, { size: 10, bold: true });
+  y -= totalRowH + 20;
+  ensureSpace(20);
+  text("SYARAT DAN KETENTUAN:", margin, y, { size: 10.5, bold: true });
+  y -= 16;
+  const termLines = String(termsText || "").split("\n").filter((l) => l.trim());
+  termLines.forEach((ln, i) => {
+    const wrapped = wrapText(ln.trim(), width - margin * 2 - 16, 9.5, false);
+    wrapped.forEach((wl, wi) => {
+      ensureSpace(14);
+      const prefix = wi === 0 ? `${i + 1}. ` : "";
+      text(prefix + wl, margin + (wi === 0 ? 0 : 16), y, { size: 9.5 });
+      y -= 13;
+    });
+  });
+  y -= 10;
+  drawParagraph(closingText, margin, width - margin * 2, 10, 13.5);
+  y -= 16;
+  ensureSpace(110);
+  text("Hormat kami,", margin, y, { size: 10 });
+  y -= 14;
+  text("PT. TIRTAAMERTA DAYAUTAMA", margin, y, { size: 10, bold: true });
+  y -= 60;
+  text("Sergi Andiva, S.T., M.B.A.", margin, y, { size: 10, bold: true });
+  y -= 13;
+  text(directorTitle || "Direktur Utama", margin, y, { size: 10 });
+  drawFooter(page);
+  return doc.save();
 };
 window.generateMonthlyReportXlsx = async function({ projects, month, year }) {
   const XLSX = await import("https://cdn.jsdelivr.net/npm/xlsx@0.18.5/+esm");
@@ -703,6 +920,25 @@ function suggestInvoiceNo(seq, date) {
   const num = String(seq).padStart(3, "0");
   const roman = window.romanMonth ? window.romanMonth(date.getMonth()) : String(date.getMonth() + 1);
   return `${num}/TD-KEU/${roman}/${date.getFullYear()}`;
+}
+async function getQuotationCounter() {
+  try {
+    const res = await window.storage.get("tims-quotation-counter", true);
+    return parseInt(res.value, 10) || 0;
+  } catch (e) {
+    return 0;
+  }
+}
+async function bumpQuotationCounter(newVal) {
+  try {
+    await window.storage.set("tims-quotation-counter", String(newVal), true);
+  } catch (e) {
+  }
+}
+function suggestQuotationNoLocal(seq, date) {
+  if (typeof window.suggestQuotationNo === "function") return window.suggestQuotationNo(seq, date);
+  const num = String(seq).padStart(3, "0");
+  return `${num}/TD-DIRUT/PH/${date.getMonth() + 1}/${date.getFullYear()}`;
 }
 const EQUIPMENT_TYPES = [
   "Cementing",
@@ -2011,6 +2247,7 @@ function App() {
         onRequestApprovalUnlock: () => setScreen("approvalAuth"),
         onMarkFailed: (reason) => markTenderFailed(activeProject.id, reason),
         onAddRevision: () => setScreen("tenderRevision"),
+        onOpenQuotation: () => setScreen("quotationForm"),
         onOpenInvoice: () => setScreen("invoiceForm"),
         canSeeFinance: financeUnlocked
       }
@@ -2023,6 +2260,12 @@ function App() {
           addTenderRevision(activeProjectId, payload);
           setScreen("detail");
         }
+      }
+    ) : screen === "quotationForm" ? /* @__PURE__ */ React.createElement(
+      QuotationForm,
+      {
+        project: projects.find((p) => p.id === activeProjectId),
+        onBack: () => setScreen("detail")
       }
     ) : screen === "financeAuth" ? /* @__PURE__ */ React.createElement(
       PinAuthScreen,
@@ -3087,7 +3330,7 @@ function VendorFields({ vendorName, vendorContractValue, onSave }) {
     }
   ), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted, marginTop: 4 } }, "Nilai ini tercatat sebagai biaya/hutang (COGS) proyek, terpisah dari harga kontrak ke klien."));
 }
-function TenderPromotionBox({ project, approvalUnlocked, onAttachWO, onPromoteByApproval, onRequestApprovalUnlock, onMarkFailed }) {
+function TenderPromotionBox({ project, approvalUnlocked, onAttachWO, onPromoteByApproval, onRequestApprovalUnlock, onMarkFailed, onOpenQuotation }) {
   const [woNumber, setWoNumber] = useState(project.woNumber || "");
   const [approverName, setApproverName] = useState("");
   const [showFailReason, setShowFailReason] = useState(false);
@@ -3106,6 +3349,16 @@ function TenderPromotionBox({ project, approvalUnlocked, onAttachWO, onPromoteBy
     },
     /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 700, color: STATUS_COLOR["Penawaran/Tender"], marginBottom: 4 } }, "Masih berstatus Penawaran/Tender"),
     /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.muted, lineHeight: 1.5, marginBottom: 12 } }, "Belum masuk rekap keuangan. Jadikan proyek berjalan dengan melampirkan nomor WO, atau lewat persetujuan otoritas."),
+    /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: onOpenQuotation,
+        className: "ig-btn-ghost",
+        style: { width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 6, marginBottom: 14 }
+      },
+      /* @__PURE__ */ React.createElement(FileText, { size: 15 }),
+      " Buat Penawaran untuk Klien (PDF)"
+    ),
     /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 600, marginBottom: 5 } }, "Opsi 1 \\u2014 Lampirkan Nomor WO"),
     /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 14 } }, /* @__PURE__ */ React.createElement(
       "input",
@@ -3323,7 +3576,8 @@ function ProjectDetail({
   onPromoteByApproval,
   onRequestApprovalUnlock,
   onMarkFailed,
-  onAddRevision
+  onAddRevision,
+  onOpenQuotation
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const sortedUpdates = [...project.updates].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -3340,7 +3594,8 @@ function ProjectDetail({
       onAttachWO,
       onPromoteByApproval,
       onRequestApprovalUnlock,
-      onMarkFailed
+      onMarkFailed,
+      onOpenQuotation
     }
   ), (project.status === "Penawaran/Tender" || project.revisions && project.revisions.length > 1) && /* @__PURE__ */ React.createElement(
     RevisionHistory,
@@ -3614,6 +3869,92 @@ function NewProjectForm({ onBack, onSave, canSeeFinance }) {
     /* @__PURE__ */ React.createElement(Lock, { size: 14 }),
     "Data keuangan disembunyikan untuk level akses ini. Nilai kontrak & pembayaran bisa diisi nanti oleh akun finance."
   ), /* @__PURE__ */ React.createElement("button", { onClick: submit, disabled: !valid, className: "ig-btn-primary", style: { width: "100%", marginTop: 8 } }, "Simpan proyek")));
+}
+function QuotationForm({ project, onBack }) {
+  const [refNo, setRefNo] = useState("");
+  const [quoteDate, setQuoteDate] = useState((/* @__PURE__ */ new Date()).toISOString().slice(0, 10));
+  const [perihal, setPerihal] = useState("");
+  const [clientAddress, setClientAddress] = useState("");
+  const [openingText, setOpeningText] = useState("");
+  const [closingText, setClosingText] = useState(
+    "Demikian kami sampaikan, atas perhatian dan kerjasamanya kami ucapkan terima kasih."
+  );
+  const [termsText, setTermsText] = useState(
+    "Pembayaran: 30% uang muka dibayarkan pada saat penerbitan/penandatanganan kontrak/PO/WO, 70% dibayarkan setelah laporan dan sertifikat diterima.\nHarga penawaran diatas tidak termasuk PPN 11%.\nAkomodasi, transportasi lokal, dan mob demob untuk Inspektur PT Tirtaamerta Dayautama ditanggung oleh PT Tirtaamerta Dayautama.\nHarga dapat berubah sesuai kondisi aktual di lapangan."
+  );
+  const [directorTitle, setDirectorTitle] = useState("Direktur Utama");
+  const [generating, setGenerating] = useState(false);
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    if (!project) return;
+    setPerihal(`Penawaran Harga ${project.rigName}`);
+    setOpeningText(
+      `Bersama ini kami sampaikan penawaran harga untuk pekerjaan ${project.rigName}${project.location ? " yang berlokasi di " + project.location : ""}. Harga penawaran kami berdasarkan pekerjaan Inspeksi dan Pengujian Teknis sebagaimana rincian di bawah ini.`
+    );
+    (async () => {
+      const counter = await getQuotationCounter();
+      setRefNo(suggestQuotationNoLocal(counter + 1, /* @__PURE__ */ new Date()));
+    })();
+  }, [project && project.id]);
+  if (!project) {
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: "Buat penawaran", onBack }), /* @__PURE__ */ React.createElement("div", { style: { padding: 24, fontSize: 13, color: COLORS.muted, textAlign: "center" } }, "Proyek tidak ditemukan."));
+  }
+  const items = project.items && project.items.length > 0 ? project.items : [{ jenisLayanan: project.equipmentType, keterangan: "", qty: 1, unit: "", hargaSatuan: project.contractValue || 0 }];
+  const totalValue = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.hargaSatuan) || 0), 0);
+  async function handleGenerate() {
+    if (typeof window.generateQuotationPdf !== "function") {
+      setMessage("Modul PDF belum siap, coba lagi sebentar.");
+      return;
+    }
+    setGenerating(true);
+    setMessage("");
+    try {
+      const dateObj = /* @__PURE__ */ new Date(quoteDate + "T00:00:00");
+      const cityDate = "Tangerang, " + formatDateLong(dateObj.toISOString());
+      const bytes = await window.generateQuotationPdf({
+        refNo,
+        cityDate,
+        perihal,
+        clientName: project.client,
+        clientAddress,
+        openingText,
+        items,
+        closingText,
+        termsText,
+        directorTitle
+      });
+      const blob = new Blob([bytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `Penawaran-${refNo.replace(/\//g, "-")}-${project.rigName}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      const counter = await getQuotationCounter();
+      await bumpQuotationCounter(counter + 1);
+      setMessage("Penawaran berhasil dibuat & diunduh.");
+    } catch (e) {
+      setMessage("Gagal membuat penawaran: " + (e && e.message || String(e)));
+    }
+    setGenerating(false);
+  }
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: "Buat Penawaran (PDF)", onBack }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, color: COLORS.muted, marginBottom: 14 } }, project.rigName, " \\u00b7 ", project.client), /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        background: COLORS.panelAlt,
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 10,
+        padding: 12,
+        marginBottom: 14
+      }
+    },
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: COLORS.muted, marginBottom: 4 } }, "Rincian pekerjaan (", items.length, " item, dari revisi aktif)"),
+    items.map((it, i) => /* @__PURE__ */ React.createElement("div", { key: i, style: { fontSize: 12, marginTop: i > 0 ? 4 : 0 } }, it.jenisLayanan, it.keterangan ? " \u2013 " + it.keterangan : "", " \\u00b7 ", it.qty, " ", it.unit || "", " \\u00d7 ", formatRupiah(it.hargaSatuan))),
+    /* @__PURE__ */ React.createElement("div", { style: { fontFamily: "JetBrains Mono, monospace", fontSize: 15, fontWeight: 700, marginTop: 8 } }, formatRupiah(totalValue))
+  ), /* @__PURE__ */ React.createElement(Field, { label: "Nomor referensi" }, /* @__PURE__ */ React.createElement("input", { value: refNo, onChange: (e) => setRefNo(e.target.value), placeholder: "cth. 001/TD-DIRUT/PH/IX/2026" })), /* @__PURE__ */ React.createElement(Field, { label: "Tanggal" }, /* @__PURE__ */ React.createElement("input", { type: "date", value: quoteDate, onChange: (e) => setQuoteDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Perihal" }, /* @__PURE__ */ React.createElement("input", { value: perihal, onChange: (e) => setPerihal(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Alamat klien (opsional, tiap baris terpisah)" }, /* @__PURE__ */ React.createElement("textarea", { value: clientAddress, onChange: (e) => setClientAddress(e.target.value), placeholder: "cth. Gedung ABC Lantai 5\nJl. Sudirman Kav. 1\nJakarta", rows: 3 })), /* @__PURE__ */ React.createElement(Field, { label: "Paragraf pembuka" }, /* @__PURE__ */ React.createElement("textarea", { value: openingText, onChange: (e) => setOpeningText(e.target.value), rows: 3 })), /* @__PURE__ */ React.createElement(Field, { label: "Syarat & ketentuan (1 baris = 1 poin)" }, /* @__PURE__ */ React.createElement("textarea", { value: termsText, onChange: (e) => setTermsText(e.target.value), rows: 5 })), /* @__PURE__ */ React.createElement(Field, { label: "Paragraf penutup" }, /* @__PURE__ */ React.createElement("textarea", { value: closingText, onChange: (e) => setClosingText(e.target.value), rows: 2 })), /* @__PURE__ */ React.createElement(Field, { label: "Jabatan penanda tangan" }, /* @__PURE__ */ React.createElement("select", { value: directorTitle, onChange: (e) => setDirectorTitle(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "Direktur Utama" }, "Direktur Utama"), /* @__PURE__ */ React.createElement("option", { value: "President Director" }, "President Director (English)"))), message && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: message.startsWith("Gagal") ? SEVERITY_COLOR.Kritis : COLORS.accent, marginBottom: 10 } }, message), /* @__PURE__ */ React.createElement("button", { onClick: handleGenerate, disabled: generating, className: "ig-btn-primary", style: { width: "100%", marginTop: 4 } }, generating ? "Membuat PDF..." : "Unduh Penawaran (PDF)")));
 }
 function InvoiceForm({ project, onBack, onInvoiceIssued }) {
   const [kind, setKind] = useState("dp");
