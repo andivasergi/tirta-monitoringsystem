@@ -20,7 +20,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <!-- Babel standalone: mengubah kode JSX di bawah menjadi JS biasa langsung di browser -->
-<!-- Aplikasi lengkap: Firebase + invoice PDF + laporan bulanan + Penawaran/Tender multi-item + vendor/COGS + notifikasi + approval, sudah dikompilasi dari JSX -> JS -->
+<!-- Aplikasi lengkap: Firebase + invoice PDF + laporan bulanan + Penawaran/Tender multi-item + revisi negosiasi + status Gagal + vendor/COGS + notifikasi + approval, sudah dikompilasi dari JSX -> JS -->
 <script type="module">
 const { useState, useEffect, useRef } = React;
 window.storage = {
@@ -364,7 +364,7 @@ window.generateMonthlyReportXlsx = async function({ projects, month, year }) {
   ];
   const monthLabel = monthNames[month] + " " + year;
   const endOfMonth = new Date(year, month + 1, 0, 23, 59, 59, 999);
-  const isFinanceEligible2 = (p) => p.status !== "Penawaran/Tender";
+  const isFinanceEligible2 = (p) => p.status !== "Penawaran/Tender" && p.status !== "Gagal";
   const financeProjects = projects.filter(isFinanceEligible2);
   const tenderProjects = projects.filter((p) => p.status === "Penawaran/Tender");
   const allUpdates = [];
@@ -504,6 +504,7 @@ window.generateMonthlyReportXlsx = async function({ projects, month, year }) {
     ["Kondisi Seluruh Proyek (kumulatif, saat laporan dibuat)", ""],
     ["Total proyek tercatat", projects.length],
     ["Penawaran/Tender (belum masuk rekap keuangan)", countByStatus["Penawaran/Tender"] || 0],
+    ["Gagal (tidak didapat, tidak masuk rekap keuangan)", countByStatus["Gagal"] || 0],
     ["Proyek Terjadwal", countByStatus["Terjadwal"] || 0],
     ["Proyek Berlangsung", countByStatus["Berlangsung"] || 0],
     ["Proyek Tertunda", countByStatus["Tertunda"] || 0],
@@ -627,17 +628,18 @@ const DEFAULT_FINANCE_PIN = "1234";
 const APPROVAL_PIN_KEY = "tims-approval-pin";
 const DEFAULT_APPROVAL_PIN = "2468";
 const NOTIF_LAST_SEEN_KEY = "tims-notif-last-seen";
-const STATUS = ["Penawaran/Tender", "Terjadwal", "Berlangsung", "Tertunda", "Selesai"];
+const STATUS = ["Penawaran/Tender", "Terjadwal", "Berlangsung", "Tertunda", "Selesai", "Gagal"];
 const STATUS_COLOR = {
   "Penawaran/Tender": "#9575CD",
   Terjadwal: "#8B96A0",
   Berlangsung: "#4E8FBF",
   Tertunda: "#D6483D",
-  Selesai: "#3FA66B"
+  Selesai: "#3FA66B",
+  Gagal: "#8B3A3A"
 };
-const STATUS_ORDER = { "Penawaran/Tender": 0, Tertunda: 1, Berlangsung: 2, Terjadwal: 3, Selesai: 4 };
+const STATUS_ORDER = { "Penawaran/Tender": 0, Tertunda: 1, Berlangsung: 2, Terjadwal: 3, Selesai: 4, Gagal: 5 };
 function isFinanceEligible(project) {
-  return project.status !== "Penawaran/Tender";
+  return project.status !== "Penawaran/Tender" && project.status !== "Gagal";
 }
 const SEVERITY = ["Kritis", "Mayor", "Minor", "Aman"];
 const SEVERITY_COLOR = {
@@ -1810,6 +1812,16 @@ function App() {
       woNumber: "",
       tenderNotes: data.tenderNotes || "",
       items: data.items || [],
+      revisions: [
+        {
+          id: uid(),
+          label: "Penawaran Awal",
+          createdAt: data.startDate,
+          items: data.items || [],
+          totalValue: data.contractValue || 0,
+          notes: data.tenderNotes || ""
+        }
+      ],
       progress: 0,
       updates: []
     };
@@ -1839,6 +1851,41 @@ function App() {
           promotedAt: (/* @__PURE__ */ new Date()).toISOString()
         } : p
       )
+    );
+  }
+  function markTenderFailed(projectId, reason) {
+    persist(
+      projects.map(
+        (p) => p.id === projectId ? {
+          ...p,
+          status: "Gagal",
+          failedReason: reason || "",
+          failedAt: (/* @__PURE__ */ new Date()).toISOString()
+        } : p
+      )
+    );
+  }
+  function addTenderRevision(projectId, { items, notes }) {
+    const totalValue = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.hargaSatuan) || 0), 0);
+    persist(
+      projects.map((p) => {
+        if (p.id !== projectId) return p;
+        const prevRevisions = p.revisions || [];
+        const revision = {
+          id: uid(),
+          label: prevRevisions.length === 0 ? "Penawaran Awal" : `Revisi ${prevRevisions.length}`,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+          items,
+          totalValue,
+          notes: notes || ""
+        };
+        return {
+          ...p,
+          items,
+          contractValue: totalValue,
+          revisions: [...prevRevisions, revision]
+        };
+      })
     );
   }
   function addUpdate(projectId, updateData) {
@@ -1962,10 +2009,22 @@ function App() {
         onAttachWO: (wo) => attachWorkOrder(activeProject.id, wo),
         onPromoteByApproval: (name) => promoteProjectByApproval(activeProject.id, name),
         onRequestApprovalUnlock: () => setScreen("approvalAuth"),
+        onMarkFailed: (reason) => markTenderFailed(activeProject.id, reason),
+        onAddRevision: () => setScreen("tenderRevision"),
         onOpenInvoice: () => setScreen("invoiceForm"),
         canSeeFinance: financeUnlocked
       }
-    ) : screen === "newProject" ? /* @__PURE__ */ React.createElement(NewProjectForm, { onBack: closeScreen, onSave: addProject, canSeeFinance: financeUnlocked }) : screen === "newTender" ? /* @__PURE__ */ React.createElement(NewTenderForm, { onBack: closeScreen, onSave: addTender }) : screen === "financeAuth" ? /* @__PURE__ */ React.createElement(
+    ) : screen === "newProject" ? /* @__PURE__ */ React.createElement(NewProjectForm, { onBack: closeScreen, onSave: addProject, canSeeFinance: financeUnlocked }) : screen === "newTender" ? /* @__PURE__ */ React.createElement(NewTenderForm, { onBack: closeScreen, onSave: addTender }) : screen === "tenderRevision" ? /* @__PURE__ */ React.createElement(
+      TenderRevisionForm,
+      {
+        project: projects.find((p) => p.id === activeProjectId),
+        onBack: () => setScreen("detail"),
+        onSave: (payload) => {
+          addTenderRevision(activeProjectId, payload);
+          setScreen("detail");
+        }
+      }
+    ) : screen === "financeAuth" ? /* @__PURE__ */ React.createElement(
       PinAuthScreen,
       {
         title: "Buka data keuangan",
@@ -2195,7 +2254,8 @@ function Dashboard({
     "Penawaran/Tender": projects.filter((p) => p.status === "Penawaran/Tender").length,
     Berlangsung: projects.filter((p) => p.status === "Berlangsung").length,
     Tertunda: projects.filter((p) => p.status === "Tertunda").length,
-    Selesai: projects.filter((p) => p.status === "Selesai").length
+    Selesai: projects.filter((p) => p.status === "Selesai").length,
+    Gagal: projects.filter((p) => p.status === "Gagal").length
   };
   const financeEligibleProjects = projects.filter(isFinanceEligible);
   const piutang = financeEligibleProjects.reduce((sum, p) => sum + (p.paymentStatus !== "Lunas" ? p.finalPaymentAmount || 0 : 0), 0);
@@ -2207,7 +2267,7 @@ function Dashboard({
     const u = getLatestUpdate(p);
     return p.status === "Tertunda" || u && u.findings.some((f) => f.severity === "Kritis");
   }).sort((a, b) => daysUntil(a.deadline) - daysUntil(b.deadline)).slice(0, 4);
-  const overdue = projects.filter((p) => p.status !== "Selesai" && p.status !== "Penawaran/Tender" && daysUntil(p.deadline) < 0).sort((a, b) => daysUntil(a.deadline) - daysUntil(b.deadline));
+  const overdue = projects.filter((p) => p.status !== "Selesai" && p.status !== "Penawaran/Tender" && p.status !== "Gagal" && daysUntil(p.deadline) < 0).sort((a, b) => daysUntil(a.deadline) - daysUntil(b.deadline));
   const recentUpdates = projects.flatMap((p) => p.updates.map((u) => ({ ...u, project: p }))).sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).slice(0, 5);
   const today = (/* @__PURE__ */ new Date()).toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long" });
   return /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
@@ -2367,7 +2427,7 @@ function Dashboard({
       color: STATUS_COLOR["Penawaran/Tender"],
       onClick: () => onFilterNav({ status: "Penawaran/Tender" })
     }
-  ), /* @__PURE__ */ React.createElement(StatTile, { label: "Berlangsung", value: counts.Berlangsung, color: STATUS_COLOR.Berlangsung, onClick: () => onFilterNav({ status: "Berlangsung" }) }), /* @__PURE__ */ React.createElement(StatTile, { label: "Tertunda", value: counts.Tertunda, color: STATUS_COLOR.Tertunda, onClick: () => onFilterNav({ status: "Tertunda" }) }), /* @__PURE__ */ React.createElement(StatTile, { label: "Selesai", value: counts.Selesai, color: STATUS_COLOR.Selesai, onClick: () => onFilterNav({ status: "Selesai" }) }), /* @__PURE__ */ React.createElement(
+  ), /* @__PURE__ */ React.createElement(StatTile, { label: "Berlangsung", value: counts.Berlangsung, color: STATUS_COLOR.Berlangsung, onClick: () => onFilterNav({ status: "Berlangsung" }) }), /* @__PURE__ */ React.createElement(StatTile, { label: "Tertunda", value: counts.Tertunda, color: STATUS_COLOR.Tertunda, onClick: () => onFilterNav({ status: "Tertunda" }) }), /* @__PURE__ */ React.createElement(StatTile, { label: "Selesai", value: counts.Selesai, color: STATUS_COLOR.Selesai, onClick: () => onFilterNav({ status: "Selesai" }) }), /* @__PURE__ */ React.createElement(StatTile, { label: "Gagal", value: counts.Gagal, color: counts.Gagal > 0 ? STATUS_COLOR.Gagal : COLORS.text, onClick: () => onFilterNav({ status: "Gagal" }) }), /* @__PURE__ */ React.createElement(
     StatTile,
     {
       label: "Menunggu Persetujuan",
@@ -3027,9 +3087,12 @@ function VendorFields({ vendorName, vendorContractValue, onSave }) {
     }
   ), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted, marginTop: 4 } }, "Nilai ini tercatat sebagai biaya/hutang (COGS) proyek, terpisah dari harga kontrak ke klien."));
 }
-function TenderPromotionBox({ project, approvalUnlocked, onAttachWO, onPromoteByApproval, onRequestApprovalUnlock }) {
+function TenderPromotionBox({ project, approvalUnlocked, onAttachWO, onPromoteByApproval, onRequestApprovalUnlock, onMarkFailed }) {
   const [woNumber, setWoNumber] = useState(project.woNumber || "");
   const [approverName, setApproverName] = useState("");
+  const [showFailReason, setShowFailReason] = useState(false);
+  const [failReason, setFailReason] = useState("");
+  const [confirmFail, setConfirmFail] = useState(false);
   return /* @__PURE__ */ React.createElement(
     "div",
     {
@@ -3089,8 +3152,129 @@ function TenderPromotionBox({ project, approvalUnlocked, onAttachWO, onPromoteBy
       },
       /* @__PURE__ */ React.createElement(Lock, { size: 14 }),
       " Buka akses persetujuan"
-    )
+    ),
+    /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, fontWeight: 600, margin: "14px 0 5px" } }, "Opsi 3 \\u2014 Tandai Gagal"),
+    !showFailReason ? /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => setShowFailReason(true),
+        style: {
+          width: "100%",
+          background: "none",
+          border: `1px solid ${STATUS_COLOR.Gagal}77`,
+          color: STATUS_COLOR.Gagal,
+          borderRadius: 10,
+          padding: "10px 0",
+          fontSize: 13,
+          fontWeight: 600
+        }
+      },
+      "Penawaran ini tidak didapat"
+    ) : /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement(
+      "textarea",
+      {
+        value: failReason,
+        onChange: (e) => {
+          setFailReason(e.target.value);
+          setConfirmFail(false);
+        },
+        placeholder: "Alasan gagal (opsional) \\u2014 cth. kalah harga, klien batal, dst.",
+        rows: 2,
+        style: { marginBottom: 8 }
+      }
+    ), /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => {
+          if (!confirmFail) {
+            setConfirmFail(true);
+            return;
+          }
+          onMarkFailed(failReason.trim());
+        },
+        style: {
+          width: "100%",
+          background: confirmFail ? STATUS_COLOR.Gagal : "none",
+          border: `1px solid ${STATUS_COLOR.Gagal}`,
+          color: confirmFail ? "#fff" : STATUS_COLOR.Gagal,
+          borderRadius: 10,
+          padding: "10px 0",
+          fontSize: 13,
+          fontWeight: 600
+        }
+      },
+      confirmFail ? "Yakin? Tap sekali lagi untuk konfirmasi" : "Tandai gagal"
+    ))
   );
+}
+function RevisionHistory({ project, onAddRevision, canAddMore }) {
+  const revisions = project.revisions || [];
+  return /* @__PURE__ */ React.createElement("div", { style: { marginTop: 14 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600 } }, "Riwayat Penawaran & Negosiasi"), canAddMore && /* @__PURE__ */ React.createElement("button", { onClick: onAddRevision, className: "ig-btn-ghost", style: { display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", fontSize: 12 } }, /* @__PURE__ */ React.createElement(Plus, { size: 13 }), " Catat Revisi")), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, revisions.map((r, i) => {
+    const isLatest = i === revisions.length - 1;
+    return /* @__PURE__ */ React.createElement(
+      "div",
+      {
+        key: r.id || i,
+        style: {
+          background: COLORS.panelAlt,
+          border: `1px solid ${isLatest ? COLORS.accent + "77" : COLORS.border}`,
+          borderRadius: 10,
+          padding: 12
+        }
+      },
+      /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", gap: 8 } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 600 } }, r.label, " ", isLatest && /* @__PURE__ */ React.createElement("span", { style: { color: COLORS.accent, fontWeight: 500 } }, "(aktif)")), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontFamily: "JetBrains Mono, monospace" } }, formatRupiah(r.totalValue))),
+      /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted, marginTop: 3 } }, formatDateTime(r.createdAt)),
+      r.notes && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, marginTop: 6 } }, r.notes),
+      r.items && r.items.length > 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: COLORS.muted, marginTop: 6 } }, r.items.map((it, j) => `${it.jenisLayanan} ${it.qty}${it.unit ? " " + it.unit : ""}`).join(", "))
+    );
+  })));
+}
+function TenderRevisionForm({ project, onBack, onSave }) {
+  const [items, setItems] = useState(
+    () => project && project.items && project.items.length > 0 ? project.items.map((it) => ({ id: uid(), jenisLayanan: it.jenisLayanan, keterangan: it.keterangan, qty: String(it.qty), unit: it.unit, hargaSatuan: String(it.hargaSatuan) })) : [{ id: uid(), jenisLayanan: EQUIPMENT_TYPES[0], keterangan: "", qty: "1", unit: "", hargaSatuan: "" }]
+  );
+  const [notes, setNotes] = useState("");
+  if (!project) {
+    return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: "Catat revisi", onBack }), /* @__PURE__ */ React.createElement("div", { style: { padding: 24, fontSize: 13, color: COLORS.muted, textAlign: "center" } }, "Proyek tidak ditemukan."));
+  }
+  const totalValue = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.hargaSatuan) || 0), 0);
+  function updateItem(id, next) {
+    setItems(items.map((it) => it.id === id ? next : it));
+  }
+  function addItem() {
+    setItems([...items, { id: uid(), jenisLayanan: EQUIPMENT_TYPES[0], keterangan: "", qty: "1", unit: "", hargaSatuan: "" }]);
+  }
+  function removeItem(id) {
+    if (items.length <= 1) return;
+    setItems(items.filter((it) => it.id !== id));
+  }
+  function submit() {
+    const cleanItems = items.map((it) => ({
+      jenisLayanan: it.jenisLayanan,
+      keterangan: it.keterangan.trim(),
+      qty: Number(it.qty) || 0,
+      unit: it.unit.trim(),
+      hargaSatuan: Number(it.hargaSatuan) || 0
+    }));
+    onSave({ items: cleanItems, notes: notes.trim() });
+  }
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: `Catat revisi \u2014 ${project.rigName}`, onBack }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.muted, marginBottom: 14, lineHeight: 1.5 } }, "Isi ulang rincian pekerjaan hasil negosiasi terbaru. Penawaran sebelumnya tetap tersimpan di riwayat, tidak hilang."), /* @__PURE__ */ React.createElement(Field, { label: "Catatan negosiasi" }, /* @__PURE__ */ React.createElement("textarea", { value: notes, onChange: (e) => setNotes(e.target.value), placeholder: "cth. Nego turun 10% dari klien, minta diskon volume", rows: 2 })), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, margin: "14px 0 10px", display: "flex", alignItems: "center", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("span", null, "Rincian pekerjaan (revisi ini)"), /* @__PURE__ */ React.createElement("button", { onClick: addItem, className: "ig-btn-ghost", style: { display: "flex", alignItems: "center", gap: 4, padding: "6px 10px", fontSize: 12 } }, /* @__PURE__ */ React.createElement(Plus, { size: 13 }), " Tambah pekerjaan")), items.map((it) => /* @__PURE__ */ React.createElement(TenderItemRow, { key: it.id, item: it, onChange: (next) => updateItem(it.id, next), onRemove: () => removeItem(it.id), canRemove: items.length > 1 })), /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        background: COLORS.panelAlt,
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 10,
+        padding: 12,
+        marginBottom: 16
+      }
+    },
+    /* @__PURE__ */ React.createElement("span", { style: { fontSize: 13, fontWeight: 600 } }, "Total nilai revisi ini"),
+    /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "JetBrains Mono, monospace", fontSize: 16, fontWeight: 700 } }, formatRupiah(totalValue))
+  ), /* @__PURE__ */ React.createElement("button", { onClick: submit, className: "ig-btn-primary", style: { width: "100%" } }, "Simpan sebagai revisi baru")));
 }
 function ProjectDetail({
   project,
@@ -3105,7 +3289,9 @@ function ProjectDetail({
   approvalUnlocked,
   onAttachWO,
   onPromoteByApproval,
-  onRequestApprovalUnlock
+  onRequestApprovalUnlock,
+  onMarkFailed,
+  onAddRevision
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const sortedUpdates = [...project.updates].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
@@ -3121,9 +3307,10 @@ function ProjectDetail({
       approvalUnlocked,
       onAttachWO,
       onPromoteByApproval,
-      onRequestApprovalUnlock
+      onRequestApprovalUnlock,
+      onMarkFailed
     }
-  ), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12, color: COLORS.muted, marginBottom: 5 } }, /* @__PURE__ */ React.createElement("span", null, "Progres inspeksi"), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "JetBrains Mono, monospace", color: COLORS.text } }, project.progress, "%")), /* @__PURE__ */ React.createElement(ProgressBar, { value: project.progress, height: 8 })), /* @__PURE__ */ React.createElement("div", { style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "4px 14px", marginTop: 16 } }, /* @__PURE__ */ React.createElement(InfoRow, { label: "Klien", value: project.client }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Jenis layanan", value: project.equipmentType }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Lokasi", value: project.location }), /* @__PURE__ */ React.createElement(InfoRow, { label: "PIC Input", value: project.picInput }), /* @__PURE__ */ React.createElement(InfoRow, { label: "PIC Lapangan", value: project.picLapangan }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Mulai", value: formatDate(project.startDate) })), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginBottom: 5 } }, "Target selesai"), /* @__PURE__ */ React.createElement(
+  ), (project.status === "Penawaran/Tender" || project.revisions && project.revisions.length > 1) && canSeeFinance && /* @__PURE__ */ React.createElement(RevisionHistory, { project, onAddRevision, canAddMore: project.status === "Penawaran/Tender" }), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 12 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between", fontSize: 12, color: COLORS.muted, marginBottom: 5 } }, /* @__PURE__ */ React.createElement("span", null, "Progres inspeksi"), /* @__PURE__ */ React.createElement("span", { style: { fontFamily: "JetBrains Mono, monospace", color: COLORS.text } }, project.progress, "%")), /* @__PURE__ */ React.createElement(ProgressBar, { value: project.progress, height: 8 })), /* @__PURE__ */ React.createElement("div", { style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: "4px 14px", marginTop: 16 } }, /* @__PURE__ */ React.createElement(InfoRow, { label: "Klien", value: project.client }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Jenis layanan", value: project.equipmentType }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Lokasi", value: project.location }), /* @__PURE__ */ React.createElement(InfoRow, { label: "PIC Input", value: project.picInput }), /* @__PURE__ */ React.createElement(InfoRow, { label: "PIC Lapangan", value: project.picLapangan }), /* @__PURE__ */ React.createElement(InfoRow, { label: "Mulai", value: formatDate(project.startDate) })), /* @__PURE__ */ React.createElement("div", { style: { marginTop: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginBottom: 5 } }, "Target selesai"), /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "date",
@@ -3359,7 +3546,7 @@ function NewProjectForm({ onBack, onSave, canSeeFinance }) {
       vendorContractValue: workBy === "Vendor" ? Number(vendorContractValue) || 0 : 0
     });
   }
-  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: "Proyek baru", onBack }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: 16 } }, /* @__PURE__ */ React.createElement(Field, { label: "Nama rig / unit / judul kontrak" }, /* @__PURE__ */ React.createElement("input", { value: rigName, onChange: (e) => setRigName(e.target.value), placeholder: "cth. Cementing SJ Petro" })), /* @__PURE__ */ React.createElement(Field, { label: "Klien" }, /* @__PURE__ */ React.createElement("input", { value: client, onChange: (e) => setClient(e.target.value), placeholder: "cth. PT Duta Wisesa Servisindo" })), /* @__PURE__ */ React.createElement(Field, { label: "Jenis layanan" }, /* @__PURE__ */ React.createElement("select", { value: equipmentType, onChange: (e) => setEquipmentType(e.target.value) }, EQUIPMENT_TYPES.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t)))), /* @__PURE__ */ React.createElement(Field, { label: "Status awal" }, /* @__PURE__ */ React.createElement("select", { value: initialStatus, onChange: (e) => setInitialStatus(e.target.value) }, STATUS.filter((s) => s !== "Selesai" && s !== "Penawaran/Tender").map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Lokasi" }, /* @__PURE__ */ React.createElement("input", { value: location, onChange: (e) => setLocation(e.target.value), placeholder: "cth. Lapangan Rantau, Aceh" })), /* @__PURE__ */ React.createElement(Field, { label: "PIC Input (penanggung jawab input data)" }, /* @__PURE__ */ React.createElement("input", { value: picInput, onChange: (e) => setPicInput(e.target.value), placeholder: "Nama PIC input" })), /* @__PURE__ */ React.createElement(Field, { label: "PIC Lapangan (penanggung jawab di lokasi)" }, /* @__PURE__ */ React.createElement("input", { value: picLapangan, onChange: (e) => setPicLapangan(e.target.value), placeholder: "Nama PIC lapangan" })), /* @__PURE__ */ React.createElement(Field, { label: "Tanggal mulai" }, /* @__PURE__ */ React.createElement("input", { type: "date", value: startDate, onChange: (e) => setStartDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Target selesai" }, /* @__PURE__ */ React.createElement("input", { type: "date", value: deadline, onChange: (e) => setDeadline(e.target.value) })), canSeeFinance ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Harga kontrak (Rp)" }, /* @__PURE__ */ React.createElement("input", { type: "number", inputMode: "numeric", value: contractValue, onChange: (e) => setContractValue(e.target.value), placeholder: "cth. 165000000" })), /* @__PURE__ */ React.createElement(Field, { label: "Pembayaran DP (Rp)" }, /* @__PURE__ */ React.createElement("input", { type: "number", inputMode: "numeric", value: dpAmount, onChange: (e) => setDpAmount(e.target.value), placeholder: "0 jika belum ada DP" })), /* @__PURE__ */ React.createElement(Field, { label: "Pembayaran FP inc PPN/PPH (Rp)" }, /* @__PURE__ */ React.createElement("input", { type: "number", inputMode: "numeric", value: finalPaymentAmount, onChange: (e) => setFinalPaymentAmount(e.target.value), placeholder: "0 jika belum ada" })), /* @__PURE__ */ React.createElement(Field, { label: "Status pembayaran" }, /* @__PURE__ */ React.createElement("select", { value: paymentStatus, onChange: (e) => setPaymentStatus(e.target.value) }, PAYMENT_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Dikerjakan oleh" }, /* @__PURE__ */ React.createElement("select", { value: workBy, onChange: (e) => setWorkBy(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "Tirtaamerta" }, "Tirtaamerta (internal)"), /* @__PURE__ */ React.createElement("option", { value: "Vendor" }, "Vendor / Subkontraktor"))), workBy === "Vendor" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Nama vendor / perusahaan" }, /* @__PURE__ */ React.createElement("input", { value: vendorName, onChange: (e) => setVendorName(e.target.value), placeholder: "cth. PT Subkon Jaya" })), /* @__PURE__ */ React.createElement(Field, { label: "Nilai kontrak vendor / COGS (Rp)" }, /* @__PURE__ */ React.createElement(
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: "Proyek baru", onBack }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: 16 } }, /* @__PURE__ */ React.createElement(Field, { label: "Nama rig / unit / judul kontrak" }, /* @__PURE__ */ React.createElement("input", { value: rigName, onChange: (e) => setRigName(e.target.value), placeholder: "cth. Cementing SJ Petro" })), /* @__PURE__ */ React.createElement(Field, { label: "Klien" }, /* @__PURE__ */ React.createElement("input", { value: client, onChange: (e) => setClient(e.target.value), placeholder: "cth. PT Duta Wisesa Servisindo" })), /* @__PURE__ */ React.createElement(Field, { label: "Jenis layanan" }, /* @__PURE__ */ React.createElement("select", { value: equipmentType, onChange: (e) => setEquipmentType(e.target.value) }, EQUIPMENT_TYPES.map((t) => /* @__PURE__ */ React.createElement("option", { key: t, value: t }, t)))), /* @__PURE__ */ React.createElement(Field, { label: "Status awal" }, /* @__PURE__ */ React.createElement("select", { value: initialStatus, onChange: (e) => setInitialStatus(e.target.value) }, STATUS.filter((s) => s !== "Selesai" && s !== "Penawaran/Tender" && s !== "Gagal").map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Lokasi" }, /* @__PURE__ */ React.createElement("input", { value: location, onChange: (e) => setLocation(e.target.value), placeholder: "cth. Lapangan Rantau, Aceh" })), /* @__PURE__ */ React.createElement(Field, { label: "PIC Input (penanggung jawab input data)" }, /* @__PURE__ */ React.createElement("input", { value: picInput, onChange: (e) => setPicInput(e.target.value), placeholder: "Nama PIC input" })), /* @__PURE__ */ React.createElement(Field, { label: "PIC Lapangan (penanggung jawab di lokasi)" }, /* @__PURE__ */ React.createElement("input", { value: picLapangan, onChange: (e) => setPicLapangan(e.target.value), placeholder: "Nama PIC lapangan" })), /* @__PURE__ */ React.createElement(Field, { label: "Tanggal mulai" }, /* @__PURE__ */ React.createElement("input", { type: "date", value: startDate, onChange: (e) => setStartDate(e.target.value) })), /* @__PURE__ */ React.createElement(Field, { label: "Target selesai" }, /* @__PURE__ */ React.createElement("input", { type: "date", value: deadline, onChange: (e) => setDeadline(e.target.value) })), canSeeFinance ? /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Harga kontrak (Rp)" }, /* @__PURE__ */ React.createElement("input", { type: "number", inputMode: "numeric", value: contractValue, onChange: (e) => setContractValue(e.target.value), placeholder: "cth. 165000000" })), /* @__PURE__ */ React.createElement(Field, { label: "Pembayaran DP (Rp)" }, /* @__PURE__ */ React.createElement("input", { type: "number", inputMode: "numeric", value: dpAmount, onChange: (e) => setDpAmount(e.target.value), placeholder: "0 jika belum ada DP" })), /* @__PURE__ */ React.createElement(Field, { label: "Pembayaran FP inc PPN/PPH (Rp)" }, /* @__PURE__ */ React.createElement("input", { type: "number", inputMode: "numeric", value: finalPaymentAmount, onChange: (e) => setFinalPaymentAmount(e.target.value), placeholder: "0 jika belum ada" })), /* @__PURE__ */ React.createElement(Field, { label: "Status pembayaran" }, /* @__PURE__ */ React.createElement("select", { value: paymentStatus, onChange: (e) => setPaymentStatus(e.target.value) }, PAYMENT_STATUS.map((s) => /* @__PURE__ */ React.createElement("option", { key: s, value: s }, s)))), /* @__PURE__ */ React.createElement(Field, { label: "Dikerjakan oleh" }, /* @__PURE__ */ React.createElement("select", { value: workBy, onChange: (e) => setWorkBy(e.target.value) }, /* @__PURE__ */ React.createElement("option", { value: "Tirtaamerta" }, "Tirtaamerta (internal)"), /* @__PURE__ */ React.createElement("option", { value: "Vendor" }, "Vendor / Subkontraktor"))), workBy === "Vendor" && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(Field, { label: "Nama vendor / perusahaan" }, /* @__PURE__ */ React.createElement("input", { value: vendorName, onChange: (e) => setVendorName(e.target.value), placeholder: "cth. PT Subkon Jaya" })), /* @__PURE__ */ React.createElement(Field, { label: "Nilai kontrak vendor / COGS (Rp)" }, /* @__PURE__ */ React.createElement(
     "input",
     {
       type: "number",
