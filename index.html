@@ -19,7 +19,7 @@
 <!-- React (versi produksi, dimuat dari CDN) -->
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<!-- Aplikasi lengkap: Login Email/Password + admin & pendaftaran akses in-app + invoice/quotation PDF + laporan bulanan + hutang/laba rugi + Penawaran/Tender + notifikasi + approval, sudah dikompilasi dari JSX -> JS -->
+<!-- Aplikasi lengkap: Login + admin & pendaftaran akses + layar Pengaturan (akun, email terdaftar, kelola admin) + invoice/quotation PDF + laporan bulanan + hutang/laba rugi + Penawaran/Tender + notifikasi + approval, sudah dikompilasi dari JSX -> JS -->
 <script type="module">
 const { useState, useEffect, useRef } = React;
 window.storage = {
@@ -932,6 +932,9 @@ function Download(props) {
 }
 function RefreshCw(props) {
   return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("path", { d: "M21 2v6h-6" }), /* @__PURE__ */ React.createElement("path", { d: "M3 12a9 9 0 0 1 15-6.7L21 8" }), /* @__PURE__ */ React.createElement("path", { d: "M3 22v-6h6" }), /* @__PURE__ */ React.createElement("path", { d: "M21 12a9 9 0 0 1-15 6.7L3 16" }));
+}
+function Settings(props) {
+  return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("path", { d: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" }), /* @__PURE__ */ React.createElement("path", { d: "M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" }));
 }
 function PenLine(props) {
   return /* @__PURE__ */ React.createElement(Icon, { ...props }, /* @__PURE__ */ React.createElement("path", { d: "M12 20h9" }), /* @__PURE__ */ React.createElement("path", { d: "M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" }));
@@ -2019,6 +2022,34 @@ function App() {
     );
     await persistAccessRequests(next);
   }
+  async function addAdminEmail(email) {
+    const clean = (email || "").trim().toLowerCase();
+    if (!clean) return { ok: false, message: "Email tidak boleh kosong." };
+    if (adminEmails.map((e) => e.toLowerCase()).includes(clean)) {
+      return { ok: false, message: "Email ini sudah jadi admin." };
+    }
+    const next = [...adminEmails, clean];
+    setAdminEmails(next);
+    try {
+      await window.storage.set(ADMIN_EMAILS_KEY, JSON.stringify(next), true);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: "Gagal menyimpan, coba lagi." };
+    }
+  }
+  async function removeAdminEmail(email) {
+    if (adminEmails.length <= 1) {
+      return { ok: false, message: "Tidak bisa menghapus admin terakhir." };
+    }
+    const next = adminEmails.filter((e) => e.toLowerCase() !== email.toLowerCase());
+    setAdminEmails(next);
+    try {
+      await window.storage.set(ADMIN_EMAILS_KEY, JSON.stringify(next), true);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, message: "Gagal menyimpan, coba lagi." };
+    }
+  }
   useEffect(() => {
     function handleAuthChange(e) {
       const user = e.detail;
@@ -2576,6 +2607,20 @@ function App() {
         onReject: rejectAccessRequest,
         onBack: closeScreen
       }
+    ) : screen === "settings" ? /* @__PURE__ */ React.createElement(
+      SettingsScreen,
+      {
+        authUser,
+        onSignOut: handleSignOut,
+        isAdmin,
+        adminEmails,
+        onAddAdmin: addAdminEmail,
+        onRemoveAdmin: removeAdminEmail,
+        accessRequests,
+        onOpenAccessManagement: () => setScreen("accessManagement"),
+        onOpenData: () => setScreen("data"),
+        onBack: closeScreen
+      }
     ) : screen === "notifications" ? /* @__PURE__ */ React.createElement(
       NotificationCenter,
       {
@@ -2634,6 +2679,7 @@ function App() {
         isAdmin,
         pendingAccessCount: accessRequests.filter((r) => r.status === "pending").length,
         onOpenAccessManagement: () => setScreen("accessManagement"),
+        onOpenSettings: () => setScreen("settings"),
         notifLastSeen
       }
     ), tab === "projects" && /* @__PURE__ */ React.createElement(
@@ -2781,7 +2827,8 @@ function Dashboard({
   onOpenLiabilities,
   isAdmin,
   pendingAccessCount,
-  onOpenAccessManagement
+  onOpenAccessManagement,
+  onOpenSettings
 }) {
   const counts = {
     total: projects.length,
@@ -2917,6 +2964,24 @@ function Dashboard({
           }
         },
         /* @__PURE__ */ React.createElement(Download, { size: 16 })
+      ), /* @__PURE__ */ React.createElement(
+        "button",
+        {
+          onClick: onOpenSettings,
+          "aria-label": "Pengaturan",
+          style: {
+            background: COLORS.panelAlt,
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: 10,
+            width: 34,
+            height: 34,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: COLORS.muted
+          }
+        },
+        /* @__PURE__ */ React.createElement(Settings, { size: 16 })
       ))
     }
   ), /* @__PURE__ */ React.createElement("div", { style: { padding: "0 16px 14px" } }, firebaseReady ? /* @__PURE__ */ React.createElement(
@@ -3280,6 +3345,104 @@ function AccessManagement({ accessRequests, onApprove, onReject, onBack }) {
   const pending = accessRequests.filter((r) => r.status === "pending").sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt));
   const resolved = accessRequests.filter((r) => r.status !== "pending").sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt)).slice(0, 10);
   return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: `Kelola Akses (${pending.length})`, onBack }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, marginBottom: 10 } }, "Menunggu Persetujuan"), pending.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted, marginBottom: 20 } }, "Tidak ada permintaan baru."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10, marginBottom: 24 } }, pending.map((r) => /* @__PURE__ */ React.createElement(AccessRequestRow, { key: r.id, req: r, onApprove, onReject }))), resolved.length > 0 && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, marginBottom: 10 } }, "Riwayat"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 8 } }, resolved.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { display: "flex", justifyContent: "space-between" } }, /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5, fontWeight: 600 } }, r.name, " (", r.email, ")"), /* @__PURE__ */ React.createElement("span", { style: { fontSize: 11, color: r.status === "approved" ? STATUS_COLOR.Selesai : STATUS_COLOR.Gagal } }, r.status === "approved" ? "Disetujui" : "Ditolak"))))))));
+}
+function SettingsScreen({
+  authUser,
+  onSignOut,
+  isAdmin,
+  adminEmails,
+  onAddAdmin,
+  onRemoveAdmin,
+  accessRequests,
+  onOpenAccessManagement,
+  onOpenData,
+  onBack
+}) {
+  const [newAdminEmail, setNewAdminEmail] = useState("");
+  const [adminMessage, setAdminMessage] = useState("");
+  const [adminBusy, setAdminBusy] = useState(false);
+  const approvedUsers = accessRequests.filter((r) => r.status === "approved").sort((a, b) => new Date(b.approvedAt || b.requestedAt) - new Date(a.approvedAt || a.requestedAt));
+  const pendingCount = accessRequests.filter((r) => r.status === "pending").length;
+  async function handleAddAdmin() {
+    if (!newAdminEmail.trim()) return;
+    setAdminBusy(true);
+    setAdminMessage("");
+    const res = await onAddAdmin(newAdminEmail.trim());
+    setAdminMessage(res.ok ? "Admin baru ditambahkan." : res.message);
+    if (res.ok) setNewAdminEmail("");
+    setAdminBusy(false);
+  }
+  async function handleRemoveAdmin(email) {
+    setAdminBusy(true);
+    setAdminMessage("");
+    const res = await onRemoveAdmin(email);
+    if (!res.ok) setAdminMessage(res.message);
+    setAdminBusy(false);
+  }
+  return /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", height: "100%" } }, /* @__PURE__ */ React.createElement(BackHeader, { title: "Pengaturan", onBack }), /* @__PURE__ */ React.createElement("div", { style: { flex: 1, overflowY: "auto", padding: 16 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, marginBottom: 8 } }, "Akun"), /* @__PURE__ */ React.createElement("div", { style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 12, marginBottom: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, color: COLORS.muted } }, "Masuk sebagai"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, marginTop: 2 } }, authUser && authUser.email || "-"), isAdmin && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11, color: STATUS_COLOR["Penawaran/Tender"], marginTop: 4 } }, "Akun admin")), /* @__PURE__ */ React.createElement("button", { onClick: onSignOut, className: "ig-btn-ghost", style: { width: "100%", marginBottom: 24 } }, "Keluar (Logout)"), isAdmin && /* @__PURE__ */ React.createElement(React.Fragment, null, /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: COLORS.panelAlt,
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 10,
+        padding: 12,
+        marginBottom: 24
+      }
+    },
+    /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600 } }, "Kelola Akses"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: COLORS.muted, marginTop: 2 } }, pendingCount > 0 ? `${pendingCount} permintaan menunggu` : "Tidak ada permintaan baru")),
+    /* @__PURE__ */ React.createElement("button", { onClick: onOpenAccessManagement, className: "ig-btn-primary", style: { fontSize: 12.5, padding: "8px 12px", whiteSpace: "nowrap" } }, "Buka")
+  ), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, marginBottom: 8 } }, "Email Terdaftar (disetujui lewat aplikasi)"), approvedUsers.length === 0 && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12, color: COLORS.muted, marginBottom: 10 } }, "Belum ada yang mendaftar lewat aplikasi."), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 } }, approvedUsers.map((r) => /* @__PURE__ */ React.createElement("div", { key: r.id, style: { background: COLORS.panelAlt, border: `1px solid ${COLORS.border}`, borderRadius: 10, padding: 10 } }, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600 } }, r.name), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: COLORS.muted } }, r.email), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: COLORS.muted, marginTop: 2 } }, "Disetujui ", formatDate(r.approvedAt || r.requestedAt))))), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: COLORS.muted, marginBottom: 24, lineHeight: 1.4 } }, 'Catatan: daftar ini hanya mencatat akun yang dibuat lewat "Minta Akses" di aplikasi. Akun yang dibuat langsung dari Firebase Console (termasuk admin pertama) tidak otomatis tercatat di sini.'), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13.5, fontWeight: 700, marginBottom: 8 } }, "Kelola Admin"), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 } }, adminEmails.map((email) => /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      key: email,
+      style: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: COLORS.panelAlt,
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 10,
+        padding: 10
+      }
+    },
+    /* @__PURE__ */ React.createElement("span", { style: { fontSize: 12.5 } }, email),
+    adminEmails.length > 1 && /* @__PURE__ */ React.createElement(
+      "button",
+      {
+        onClick: () => handleRemoveAdmin(email),
+        disabled: adminBusy,
+        style: { background: "none", border: "none", color: STATUS_COLOR.Gagal, fontSize: 11.5 }
+      },
+      "Hapus"
+    )
+  ))), /* @__PURE__ */ React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 6 } }, /* @__PURE__ */ React.createElement(
+    "input",
+    {
+      value: newAdminEmail,
+      onChange: (e) => setNewAdminEmail(e.target.value),
+      placeholder: "email@contoh.com",
+      style: { flex: 1 }
+    }
+  ), /* @__PURE__ */ React.createElement("button", { onClick: handleAddAdmin, disabled: adminBusy || !newAdminEmail.trim(), className: "ig-btn-primary", style: { padding: "0 14px", whiteSpace: "nowrap" } }, "Tambah")), adminMessage && /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: COLORS.accent, marginBottom: 10 } }, adminMessage), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 10.5, color: COLORS.muted, marginBottom: 24, lineHeight: 1.4 } }, "Menambahkan admin di sini tidak membuatkan akun login baru \\u2014 orang tersebut tetap perlu akun (lewat Kelola Akses) sebelum bisa masuk sebagai admin.")), /* @__PURE__ */ React.createElement(
+    "div",
+    {
+      style: {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        background: COLORS.panelAlt,
+        border: `1px solid ${COLORS.border}`,
+        borderRadius: 10,
+        padding: 12
+      }
+    },
+    /* @__PURE__ */ React.createElement("div", null, /* @__PURE__ */ React.createElement("div", { style: { fontSize: 13, fontWeight: 600 } }, "Data & Cadangan"), /* @__PURE__ */ React.createElement("div", { style: { fontSize: 11.5, color: COLORS.muted, marginTop: 2 } }, "PIN keuangan, PIN persetujuan, backup, laporan bulanan")),
+    /* @__PURE__ */ React.createElement("button", { onClick: onOpenData, className: "ig-btn-ghost", style: { fontSize: 12.5, padding: "8px 12px", whiteSpace: "nowrap" } }, "Buka")
+  )));
 }
 function LiabilitiesCenter({ projects, onOpenProject, onBack, onToggleVendorPaid, onTogglePpn }) {
   const eligible = projects.filter(isFinanceEligible);
