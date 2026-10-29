@@ -150,8 +150,6 @@ window.firebaseSubmitAccessRequest = async function({ name, email, reason }) {
     const { db } = await Promise.race([ensureFirebaseModules(), firebaseTimeout(15e3)]);
     const { ref, get, set } = dbMod;
     const path = "tims-shared/tims-access-requests";
-    const snap = await get(ref(db, path));
-    const current = snap.exists() && Array.isArray(snap.val()) ? snap.val() : [];
     const entry = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
       name: name || "",
@@ -160,7 +158,7 @@ window.firebaseSubmitAccessRequest = async function({ name, email, reason }) {
       requestedAt: (/* @__PURE__ */ new Date()).toISOString(),
       status: "pending"
     };
-    await set(ref(db, path), [...current, entry]);
+    await set(ref(db, path + "/" + entry.id), entry);
     return { ok: true };
   } catch (e) {
     return { ok: false, message: e && e.message || String(e) };
@@ -972,6 +970,20 @@ const NOTIF_LAST_SEEN_KEY = "tims-notif-last-seen";
 const ADMIN_EMAILS_KEY = "tims-admin-emails";
 const DEFAULT_ADMIN_EMAIL = "andiva.sergi@gmail.com";
 const ACCESS_REQUESTS_KEY = "tims-access-requests";
+function normalizeAccessRequests(raw) {
+  let v = raw;
+  if (typeof v === "string") {
+    try { v = JSON.parse(v); } catch (e) { return []; }
+  }
+  if (!v) return [];
+  const arr = Array.isArray(v) ? v : typeof v === "object" ? Object.values(v) : [];
+  return arr.filter((r) => r && typeof r === "object" && r.email);
+}
+function accessRequestsToMap(list) {
+  const m = {};
+  list.forEach((r) => { m[r.id] = r; });
+  return m;
+}
 const STATUS = ["Penawaran/Tender", "Terjadwal", "Berlangsung", "Tertunda", "Selesai", "Gagal"];
 const STATUS_COLOR = {
   "Penawaran/Tender": "#9575CD",
@@ -1979,18 +1991,13 @@ function App() {
     (async () => {
       try {
         const res = await window.storage.get(ACCESS_REQUESTS_KEY, true);
-        const list = res && res.value ? JSON.parse(res.value) : [];
-        setAccessRequests(Array.isArray(list) ? list : []);
+        setAccessRequests(normalizeAccessRequests(res && res.value));
       } catch (e) {
         setAccessRequests([]);
       }
       if (typeof window.subscribeStorage === "function") {
         unsub = window.subscribeStorage(ACCESS_REQUESTS_KEY, (raw) => {
-          try {
-            const list = JSON.parse(raw);
-            setAccessRequests(Array.isArray(list) ? list : []);
-          } catch (e) {
-          }
+          setAccessRequests(normalizeAccessRequests(raw));
         });
       }
     })();
@@ -2001,7 +2008,7 @@ function App() {
   async function persistAccessRequests(next) {
     setAccessRequests(next);
     try {
-      await window.storage.set(ACCESS_REQUESTS_KEY, JSON.stringify(next), true);
+      await window.storage.set(ACCESS_REQUESTS_KEY, accessRequestsToMap(next), true);
     } catch (e) {
     }
   }
